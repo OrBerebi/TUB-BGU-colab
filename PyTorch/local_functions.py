@@ -8,11 +8,11 @@ def spatial_interpolation(Hnm,Y,is_time=False):
     p_left     = torch.matmul(Y, Hnm[:,:,0])
     p_right    = torch.matmul(Y, Hnm[:,:,1])
     p          = torch.stack((p_left,p_right),2)
-
+    
     if is_time:
-        p_t = np.fft.irfft(p, n = filt_samp,axis = 1) # space x time x left/right
-        p_t = np.roll(p_t, shift=filt_samp // 2, axis = 1)
-        return(p_t)
+        p_hat_t = torch.fft.irfft(p, n=filt_samp, dim=1)  # space x time x left/right
+        p_hat_t = torch.roll(p_hat_t, shifts=filt_samp // 2, dims=1)
+        return p_hat_t
         
     return(p)
 
@@ -28,7 +28,7 @@ def clc_e_nmse(p_ref,p_hat,norm_flag=True):
         e_nmse_r =  torch.linalg.vector_norm(p_ref_r - p_r, dim=0) / torch.linalg.vector_norm(p_ref_r, dim=0)
     else:
         e_nmse_l =  torch.linalg.vector_norm(p_ref_l - p_l, dim=0)
-        e_nmse_r = torch.linalg.vector_norm(p_ref_r - p_r, dim=0)
+        e_nmse_r =  torch.linalg.vector_norm(p_ref_r - p_r, dim=0)
         
     e_nmse_norm = 20 * torch.log10((e_nmse_l + e_nmse_r) / 2)
 

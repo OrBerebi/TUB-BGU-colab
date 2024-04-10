@@ -92,7 +92,7 @@ for freqInd = cutOffFreqInd_high : size(H,2)
 end
 
 %for N<3 use Diffuse-Field Covariance Constraint
-flag =true;
+flag =false;
 if flag
 if N < 3 && ~isempty(Y_high)
     [H_l_nm_MagLS,H_r_nm_MagLS] = diff_field_eq(Y_high,H,H_l_nm_MagLS,H_r_nm_MagLS,cutOffFreqInd_high);

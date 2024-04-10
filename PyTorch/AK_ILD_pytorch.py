@@ -4,7 +4,7 @@ from scipy.fft import rfft,irfft
 from scipy.signal import lfilter
 
 
-def clc_e_ILD(P, f_c, fs, f_lim, Nmax, n, C, nfft,ILD_ref):
+def clc_ILD(P, f_c, fs, f_lim, Nmax, n, C, nfft):
     P = torch.permute(P, (0, 2, 1))
     x_l = torch.squeeze(P[:, 0, :]) # space x left/right x time (361, 2, 768)
     x_l = x_l.transpose(0, 1)
@@ -50,11 +50,8 @@ def clc_e_ILD(P, f_c, fs, f_lim, Nmax, n, C, nfft,ILD_ref):
 
         # get ERB error
         ILD[k, :] = 10 * torch.log10(torch.abs(X_L) / torch.abs(X_R))
-        # ILD[k, :] = torch.abs(X_L) / torch.abs(X_R)
-        # ILD[k, :] = X_L / X_R
     
-    e_ILD_omega    = torch.mean(torch.abs(ILD_ref - ILD),dim=0) #avarage over frequencies bands
-    return e_ILD_omega
+    return ILD
 
 
 def ERBFilterBank(x, fcoefs=None):

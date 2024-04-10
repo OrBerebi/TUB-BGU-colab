@@ -44,7 +44,7 @@ N_high = 42;
 % Cutoff frequency for MaleS preprocessing
 cutOffFreq = 1.5e3;
 % Frequency band for evaluating ILD curves
-f_band = [1.5e3, 20e3];
+f_band = [10e3, 20e3];
 
 % Omega_az
 ph_DOA_omega_az = deg2rad((-180:180)).';
@@ -53,7 +53,8 @@ omega_az  = [th_DOA_omega_az, ph_DOA_omega_az];
 clear ph_DOA_res ph_DOA_max ph_DOA_omega_az th_DOA_omega_az
 
 % Save data path
-save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data";
+save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/09_04_24/";
+mkdir(save_name)
 [fPath, fName, fExt] = fileparts(file_path_HRTF);
 tmp = "/"+fName + "_N"+num2str(N_low)+".mat";
 save_name = save_name+tmp;
@@ -160,16 +161,6 @@ if is_plot
     xlabel("Incident Angle [deg]")
     ylabel("Error [dB]")
 
-    % figure
-    % ILD_ref_av = squeeze(mean(ILD_ref,1)).';
-    % plot(ang_vec,ILD_ref_av)
-    % hold on
-    % legend(["Reference"])
-    % grid on
-    % xlim([-180 180])
-    % title("ILD error")
-    % xlabel("Incident Angle [deg]")
-    % ylabel("Error [dB]")
 
 
     figure
