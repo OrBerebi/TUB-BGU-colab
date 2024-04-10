@@ -116,6 +116,24 @@ class complex_tanh_layer(torch.nn.Module):
         """
         return torch.tanh(input.real).type(torch.complex128)+1j*torch.tanh(input.imag).type(torch.complex128)
 
+def calc_e_enrgy(p_hat,p_ref):
+    enrgy_ref = torch.squeeze(torch.norm(torch.abs(p_ref[:,:,0]), dim=1)) / torch.squeeze(torch.norm(torch.abs(p_ref[:,:,1]), dim=1))
+    enrgy_hat = torch.squeeze(torch.norm(torch.abs(p_hat[:,:,0]), dim=1)) / torch.squeeze(torch.norm(torch.abs(p_hat[:,:,1]), dim=1))
+    
+    e_enrgy = torch.squeeze(torch.norm(torch.abs(enrgy_ref-enrgy_hat), dim=0))
+    return e_enrgy
+
+def clc_e_mag_diff(p_hat):
+    p_l = torch.diff(torch.abs(p_hat[:,:,0]),n=1, dim=1)
+    p_r = torch.diff(torch.abs(p_hat[:,:,1]),n=1, dim=1)
+    e_mag_diff_l = torch.norm(torch.abs(p_l), dim=0)
+    e_mag_diff_r = torch.norm(torch.abs(p_r), dim=0) 
+
+    e_mag_norm = ((e_mag_diff_l + e_mag_diff_r) / 2)
+
+
+    return e_mag_norm
+
 
 def loss_function_v1(Hnm,Y_lebedev,Y_az,p_ref,ILD_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,norm_flag):
     # Calc the low-order HRTF in the Omega directions
@@ -147,10 +165,10 @@ def loss_function_v1(Hnm,Y_lebedev,Y_az,p_ref,ILD_ref, AK_f_c, fs, f_band, AK_Nm
 
     e_total  = lambda_0*torch.norm(e_ILD,dim=0) + lambda_1*torch.norm(e_nmse,dim=0) + lambda_2*torch.norm(e_mag[idx_min_mag:idx_max_mag],dim=0)
 
-    return e_total
+    return e_total, e_ILD, e_nmse, e_mag, ILD
 
 
-def loss_function_history(Hnm,Y_lebedev,Y_az,p_ref,ILD_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,norm_flag):
+def loss_function_v2(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,norm_flag):
     # Calc the low-order HRTF in the Omega directions
     p_lebedev = f.spatial_interpolation(Hnm,Y_lebedev,False)
     
@@ -159,12 +177,14 @@ def loss_function_history(Hnm,Y_lebedev,Y_az,p_ref,ILD_ref, AK_f_c, fs, f_band, 
     
     # Calc the NMSE and Magnitude error for each set of Hnm
     e_nmse = f.clc_e_nmse(p_ref,p_lebedev,norm_flag)
-    e_mag = f.clc_e_mag(p_ref,p_lebedev,norm_flag)
+    e_mag  = f.clc_e_mag(p_ref,p_lebedev,norm_flag)
     
     # Calculate the ILD error for each low-order representation
     ILD      = ak.clc_ILD(p_az_t, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
     e_ILD    = torch.mean(torch.abs(ILD_ref - ILD),dim=0) #avarage over frequencies bands
 
+    # Calculate the Enargy error for each low-order representation
+    e_mag_diff = clc_e_mag_diff(p_lebedev)
     
     # Get error band indexs
     f_vec   = np.arange(0,e_mag.shape[0])*((fs/2)/(e_mag.shape[0]-1))
@@ -178,11 +198,12 @@ def loss_function_history(Hnm,Y_lebedev,Y_az,p_ref,ILD_ref, AK_f_c, fs, f_band, 
     lambda_0 = lambda_vec[0]
     lambda_1 = lambda_vec[1]
     lambda_2 = lambda_vec[2]
+    lambda_3 = lambda_vec[3]
 
-    
-    e_total  = lambda_0*torch.norm(e_ILD,dim=0) + lambda_1*torch.norm(e_nmse,dim=0) + lambda_2*torch.norm(e_mag[idx_min_mag:idx_max_mag],dim=0)
+    e_total  =  lambda_0*torch.norm(e_ILD,dim=0) + lambda_1*torch.norm(e_nmse,dim=0) + lambda_2*torch.norm(e_mag[idx_min_mag:idx_max_mag],dim=0) + lambda_3*torch.norm(e_mag_diff[idx_min_mag:idx_max_mag],dim=0) 
 
-    return e_total, e_ILD, e_nmse, e_mag, ILD
+    return e_total, e_ILD, e_nmse, e_mag, ILD, torch.norm(e_mag_diff[idx_min_mag:idx_max_mag],dim=0)
+
 
 
 def binaural_reproduction(Hnm,Y,sig):
@@ -208,16 +229,13 @@ def binaural_reproduction(Hnm,Y,sig):
     
     return p_out
 
-def plot_pyfar(Hnm,Ynm,fs,sig_path,save_path):
+def plot_pyfar(Hnm,Ynm,fs,sig_path,save_path,ang,bp):
     dry_sig = pf.io.read_audio(sig_path)
     HRIR   = f.spatial_interpolation(Hnm,Ynm,True).cpu().numpy()
     HRIR = np.transpose(HRIR,[0,2,1])
     print("HRIR on lateral plane shape: ", HRIR.shape)
-    ang = 100
     HRIR_pf = pf.Signal(HRIR, fs)
-    HRIR_pf_bp = pf.dsp.filter.butterworth(HRIR_pf, 8, [1e3, 10e3], btype='bandpass')
-
-
+    HRIR_pf_bp = pf.dsp.filter.butterworth(HRIR_pf, 8, bp, btype='bandpass')
     #HRIR_pf = pf.dsp.minimum_phase(HRIR_pf)
     
     p_out       = pf.dsp.convolve(HRIR_pf[ang],dry_sig)
@@ -226,11 +244,9 @@ def plot_pyfar(Hnm,Ynm,fs,sig_path,save_path):
     p_out_bp    = pf.dsp.normalize(p_out_bp,channel_handling='max')
     print("The channel-wise energy: ", pf.dsp.energy(HRIR_pf[ang]))
 
-
     ax = pf.plot.time_freq(HRIR_pf[ang], label='120 deg HRIR')
     ax[0].legend()
     plt.show()
-
     
     ax = pf.plot.time_freq(HRIR_pf_bp[ang], label='HRIR band-pass')
     ax[0].legend()
@@ -260,7 +276,7 @@ def save_audio_to_path(save_path,x,fs):
         #print(f"Audio file saved: {file_path}")
     
     
-def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
+def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
 
     # Setup device
     has_gpu = torch.cuda.is_available()
@@ -344,44 +360,25 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
     
 
 
+    p_ref_az_t = f.spatial_interpolation(Hnm_high,Y_high_az,True)
     
     model    = NN_v2_simp(Hnm_low.shape[0],Hnm_low.shape[1])
     model.to(device)
-
-
     
     optimizer = torch.optim.SGD(model.parameters(), lr=0.00003, momentum=0.9)
     optimizer.zero_grad()
 
-    x = Hnm_low
+    x = Hnm_mls
     x.to(device)
 
     result = summary(model,input_size= x.shape,dtypes=[torch.complex128],verbose=2,col_width=13,
         col_names=["kernel_size","input_size", "output_size", "num_params", "mult_adds"], row_settings=["var_names"],)
 
-    """
-    if not(shutup):
-        model_real  = NeuralNetwork_v4_real(p_mics_omega.shape[2],p_mics_omega.shape[0])
-        model_real.to(device)
-
-        input_names = ['BSM-coef-in']
-        output_names = ['BSM-coef-out']
-        foo, poo = os.path.split(data_path_dir[:-1])
-        filename2save = foo + "/model_graph.onnx"
-        x_example = x.real.type(torch.float32)
-        torch.onnx.export(model_real, x_example, filename2save, input_names=input_names, output_names=output_names)
-        
-        result = summary(model_v2,input_size= x.shape,dtypes=[torch.complex128],verbose=2,col_width=13,
-        col_names=["kernel_size","input_size", "output_size", "num_params", "mult_adds"], row_settings=["var_names"],)
-        file = open(foo+ "model_summary.txt", 'w')
-        file.write(str(result))
-        file.close()
-    """
-
     h_nmse = []
     h_mag = []
     h_ILD = []
     h_total = []
+    h_enrgy = []
 
 
     for epoch in tqdm (range (epochs), desc="Loading..."):
@@ -391,22 +388,20 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
 
         # forward + backward + optimize
         output = model(x)
-        loss   = loss_function_v1(output,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,norm_flag=False)
+        loss, e_ILD_after, e_nmse_after, e_mag_after,ILD_after,e_enrgy_after   = loss_function_v2(output,Y_low_lebedev,
+                                                                                    Y_low_az,p_f_high_lebedev,p_ref_az_t,ILD_ref,
+                                                                                    AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
+                                                                                    nfft,lambda_vec,norm_flag=False)
 
         loss.backward(retain_graph=True)
         optimizer.step()
 
-        # print statistics
-        e_total_after,e_ILD_after, e_nmse_after, e_mag_after,ILD_after = loss_function_history(output,
-                                                                                     Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
-                                                                                     AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
-                                                                                     nfft,lambda_vec,norm_flag=False)
-
+        h_enrgy     = np.append(h_enrgy,e_enrgy_after.detach().cpu().numpy()*lambda_vec[3])
         e_ILD_after = torch.mean(torch.abs(ILD_ref - e_ILD_after),dim=0) #avarage over frequencies bands
         h_ILD       = np.append(h_ILD,torch.norm(e_ILD_after,dim=0).detach().cpu().numpy()*lambda_vec[0])
         h_nmse      = np.append(h_nmse,torch.norm(e_nmse_after,dim=0).detach().cpu().numpy()*lambda_vec[1])
         h_mag       = np.append(h_mag,torch.norm(e_mag_after,dim=0).detach().cpu().numpy()*lambda_vec[2])
-        h_total     = np.append(h_total,torch.norm(e_total_after,dim=0).detach().cpu().numpy())
+        h_total     = np.append(h_total,torch.norm(loss,dim=0).detach().cpu().numpy())
 
     if not(shutup):    
         print('Finished Training')
@@ -415,11 +410,12 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
         plt.plot(h_nmse)
         plt.plot(h_mag)
         plt.plot(h_ILD)
+        plt.plot(h_enrgy)
         plt.grid()
         plt.xlabel("iterations")
         plt.ylabel("error")
         plt.title("Training Curves")
-        plt.legend(["e NMSE","e Magnitude","e ILD"]);
+        plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff"]);
         if is_save:
             plt.savefig(data_path_dir+ "Training_Curves.png")
         plt.show()
@@ -430,39 +426,15 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
     idx_min = (np.abs(f_vec - 2e3)).argmin()
     Hnm_imls[:,0:idx_min,:] = Hnm_mls[:,0:idx_min,:]
 
-    sig_path = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/dry_signals/white-noise-burst.wav"
-    save_path = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/audio_examples/09_04_24-new/"
-
-    print("Time Frequcny plots for iMagLS")
-    if not os.path.isdir(save_path+"/iMagLS/"):
-            os.makedirs(save_path+"/iMagLS/")
-    plot_pyfar(Hnm_imls,Y_low_az,fs,sig_path,save_path+"/iMagLS/")
-
-    print("Time Frequcny plots for MagLS")
-    if not os.path.isdir(save_path+"/MagLS/"):
-            os.makedirs(save_path+"/MagLS/")
-    plot_pyfar(Hnm_mls,Y_low_az,fs,sig_path,save_path+"/MagLS/")
-
-    print("Time Frequcny plots for HOA")
-    if not os.path.isdir(save_path+"/HOA/"):
-            os.makedirs(save_path+"/HOA/")
-    plot_pyfar(Hnm_high,Y_high_az,fs,sig_path,save_path+"/HOA/")
-    
-    
-
     
     # Calc some plots
-    
-
-
-    
-    e_total_imls,e_ILD_imls, e_nmse_imls, e_mag_imls, ILD_imls = loss_function_history(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
+    e_total_imls,e_ILD_imls, e_nmse_imls, e_mag_imls, ILD_imls = loss_function_v1(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
                                                                                      AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
                                                                                      nfft,lambda_vec,norm_flag=True)
-    e_total_ls,e_ILD_ls, e_nmse_ls, e_mag_ls, ILD_ls = loss_function_history(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
+    e_total_ls,e_ILD_ls, e_nmse_ls, e_mag_ls, ILD_ls = loss_function_v1(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
                                                                                      AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
                                                                                      nfft,lambda_vec,norm_flag=True)
-    e_total_mls,e_ILD_mls, e_nmse_mls, e_mag_mls, ILD_mls = loss_function_history(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
+    e_total_mls,e_ILD_mls, e_nmse_mls, e_mag_mls, ILD_mls = loss_function_v1(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
                                                                                      AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
                                                                                      nfft,lambda_vec,norm_flag=True)
 
@@ -533,10 +505,11 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
         plt.show()
 
     
-    sig,fs_sig = torchaudio.load(sig_path)
+    
 
 
     if is_save:
+        sig,fs_sig = torchaudio.load(sig_path)
         if not os.path.isdir(save_path+"/ref/"):
             os.makedirs(save_path+"/ref/")
         print("Binaural reproduction for reference")
@@ -560,6 +533,8 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1],shutup=True,is_save=False):
         print("Binaural reproduction for iMagLS")
         res = binaural_reproduction(Hnm_imls,Y_low_az,sig)
         save_audio_to_path(save_path+"/iMagLS/",res,fs_sig)
+    
+    return Hnm_imls, Hnm_mls, Hnm_high, Y_high_az, Y_low_az, fs
 
 
 

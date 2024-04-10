@@ -50,7 +50,6 @@ def clc_e_mag(p_ref,p_hat,norm_flag=True):
 
     e_mag_norm = 20 * torch.log10((e_mag_l + e_mag_r) / 2)
 
-
     return e_mag_norm
 
 
