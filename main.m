@@ -44,7 +44,7 @@ N_high = 42;
 % Cutoff frequency for MaleS preprocessing
 cutOffFreq = 1.5e3;
 % Frequency band for evaluating ILD curves
-f_band = [10e3, 20e3];
+f_band = [1.5e3, 20e3];
 
 % Omega_az
 ph_DOA_omega_az = deg2rad((-180:180)).';
@@ -52,8 +52,9 @@ th_DOA_omega_az = deg2rad(90 * ones(size(ph_DOA_omega_az)));
 omega_az  = [th_DOA_omega_az, ph_DOA_omega_az];
 clear ph_DOA_res ph_DOA_max ph_DOA_omega_az th_DOA_omega_az
 
+
 % Save data path
-save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/09_04_24/";
+save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/11_04_24/";
 mkdir(save_name)
 [fPath, fName, fExt] = fileparts(file_path_HRTF);
 tmp = "/"+fName + "_N"+num2str(N_low)+".mat";
@@ -70,13 +71,17 @@ hobj.taps = nfft;
 f_vec = linspace(0,fs/2,nfft/2+1).';
 f_vec(1) = f_vec(2)/2;
 
+% Get the angles for the sphirical grid
+omega = [hobj.sourceGrid.elevation,hobj.sourceGrid.azimuth];
+
+
 
 
 disp("Calculating high order SH coefficients")
 Hnm_high = get_SH_coeff(hobj,N_high,nfft); % SH x freq x ears
 
 disp("Calculating high order Y matrices")
-Y_high_lebedev = sh2(N_high,hobj.sourceGrid.elevation,hobj.sourceGrid.azimuth).';   % SH x Omega
+Y_high_lebedev = sh2(N_high,omega(:,1),omega(:,2)).';   % SH x Omega
 Y_high_az      = sh2(N_high,omega_az(:,1),omega_az(:,2)).';                         % SH x Omega_az
 
 disp("Calculating high order ear pressure signals")
@@ -88,7 +93,7 @@ disp("Calculating low order SH coefficients")
 Hnm_low = get_SH_coeff(hobj,N_low,nfft); % SH x freq x ears
 
 disp("Calculating low order Y matrices")
-Y_low_lebedev = sh2(N_low,hobj.sourceGrid.elevation,hobj.sourceGrid.azimuth).';   % SH x Omega
+Y_low_lebedev = sh2(N_low,omega(:,1),omega(:,2)).';   % SH x Omega
 Y_low_az      = sh2(N_low,omega_az(:,1),omega_az(:,2)).';                         % SH x Omega_az
 
 disp("Calculating low order ear pressure signals")
@@ -124,7 +129,7 @@ e_ILD_mls_freq = squeeze(mean(abs(ILD_ref - ILD_mls),2));
 ang_vec = rad2deg(omega_az(:,2));
 
 if is_save
-    save(save_name,"p_f_high_lebedev","ILD_ref","f_band","Hnm_low","Hnm_mls","Hnm_high","fs","N_low","N_high","f_vec","ang_vec","Y_high_lebedev","Y_high_az","Y_low_lebedev","Y_low_az");
+    save(save_name,"p_f_high_lebedev","ILD_ref","f_band","Hnm_low","Hnm_mls","Hnm_high","fs","N_low","N_high","f_vec","ang_vec","Y_high_lebedev","Y_high_az","Y_low_lebedev","Y_low_az","omega","omega_az");
 
 end
 if is_plot

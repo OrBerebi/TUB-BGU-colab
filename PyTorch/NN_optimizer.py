@@ -275,25 +275,7 @@ def save_audio_to_path(save_path,x,fs):
     
         #print(f"Audio file saved: {file_path}")
     
-    
-def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
-
-    # Setup device
-    has_gpu = torch.cuda.is_available()
-    has_mps = torch.backends.mps.is_built()
-    device = "mps" if torch.backends.mps.is_built() \
-        else "gpu" if torch.cuda.is_available() else "cpu"
-    if not(shutup):
-        print(f"Python Platform: {platform.platform()}")
-        print(f"PyTorch Version: {torch.__version__}")
-        print()
-        print(f"Python {sys.version}")
-        print("NVIDIA/CUDA GPU is", "available" if has_gpu else "NOT AVAILABLE")
-        print("MPS (Apple Metal) is", "AVAILABLE" if has_mps else "NOT AVAILABLE")
-    device = "cpu"
-    if not(shutup):
-        print(f"Target device is {device}")
-
+def import_matlab_data(data_path,device,shutup):
     # Import the Variables See Discriptions above for more info
     #print(os.path.basename(data_path))
     # Assign the local names for the variables (extract theme from the matlab dict)
@@ -304,6 +286,8 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
     N_high  = mat["N_high"][0]
     f_vec   = mat["f_vec"]
     ang_vec = mat["ang_vec"]
+    omega      = mat["omega"]
+    omega_az   = mat["omega_az"]
     nfft    = (f_vec.shape[0]-1)*2
     
     Hnm_high      = mat["Hnm_high"]
@@ -357,10 +341,33 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         print("N_high\t\t",N_high.shape, "\t\t\t\t",N_high.dtype)
         print("N_low\t\t",N_low.shape, "\t\t\t\t",N_low.dtype)
 
-    
-
-
     p_ref_az_t = f.spatial_interpolation(Hnm_high,Y_high_az,True)
+
+    return omega, omega_az, fs, f_band, N_low, N_high, f_vec, ang_vec, nfft, Hnm_high, Hnm_low, Hnm_mls, Y_high_lebedev, Y_high_az, Y_low_lebedev, Y_low_az, p_f_high_lebedev, ILD_ref, p_high_az_t, AK_Nmax, AK_f_c, AK_n, AK_C, p_ref_az_t
+    
+def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
+
+    # Setup device
+    has_gpu = torch.cuda.is_available()
+    has_mps = torch.backends.mps.is_built()
+    device = "mps" if torch.backends.mps.is_built() \
+        else "gpu" if torch.cuda.is_available() else "cpu"
+    if not(shutup):
+        print(f"Python Platform: {platform.platform()}")
+        print(f"PyTorch Version: {torch.__version__}")
+        print()
+        print(f"Python {sys.version}")
+        print("NVIDIA/CUDA GPU is", "available" if has_gpu else "NOT AVAILABLE")
+        print("MPS (Apple Metal) is", "AVAILABLE" if has_mps else "NOT AVAILABLE")
+    device = "cpu"
+    if not(shutup):
+        print(f"Target device is {device}")
+
+    if is_save:
+        if not os.path.isdir(results_save_path):
+            os.makedirs(results_save_path)
+
+    omega, omega_az, fs, f_band, N_low, N_high, f_vec, ang_vec, nfft, Hnm_high, Hnm_low, Hnm_mls, Y_high_lebedev, Y_high_az, Y_low_lebedev, Y_low_az, p_f_high_lebedev, ILD_ref, p_high_az_t, AK_Nmax, AK_f_c, AK_n, AK_C, p_ref_az_t = import_matlab_data(data_path,device,shutup)
     
     model    = NN_v2_simp(Hnm_low.shape[0],Hnm_low.shape[1])
     model.to(device)
@@ -417,7 +424,7 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         plt.title("Training Curves")
         plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff"]);
         if is_save:
-            plt.savefig(data_path_dir+ "Training_Curves.png")
+            plt.savefig(results_save_path+ "/Training_Curves.png")
         plt.show()
 
     Hnm_imls = output.detach()
@@ -465,6 +472,8 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         plt.title("Avaraged per ear NMSE and Magnitude Errors")
         plt.legend(["LS NMSE","MagLS NMSE","iMagLS NMSE","LS magnitude","MagLS magnitude","iMagLS magnitude"])
         plt.ylabel("error[dB]");
+        if is_save:
+            plt.savefig(results_save_path+ "/freq_errors.png")
         plt.show()
         
         
@@ -479,6 +488,8 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         plt.legend(["Reference","LS","MagLS","iMagLS"])
         plt.xlim((ang_vec[0], ang_vec[-1]))
         plt.title("ILD Value average over all central frequencies");
+        if is_save:
+            plt.savefig(results_save_path+ "/ILD_Curves.png")
         plt.show()
         
         plt.plot(ang_vec,e_ILD_ls)
@@ -490,6 +501,8 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         plt.legend(["LS","MagLS","iMagLS"])
         plt.xlim((ang_vec[0], ang_vec[-1]))
         plt.title("ILD error average over all central frequencies");
+        if is_save:
+            plt.savefig(results_save_path+ "/ILD_errors_ang.png")
         plt.show()
     
     
@@ -502,12 +515,15 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         plt.legend(["LS","MagLS","iMagLS"])
         plt.xlim((AK_f_c[0], AK_f_c[-1]))
         plt.title("ILD Error average over all lateral Directions");
+        if is_save:
+            plt.savefig(results_save_path+ "/ILD_errors_freq.png")
         plt.show()
 
     
     
 
 
+    """
     if is_save:
         sig,fs_sig = torchaudio.load(sig_path)
         if not os.path.isdir(save_path+"/ref/"):
@@ -533,8 +549,9 @@ def start(data_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
         print("Binaural reproduction for iMagLS")
         res = binaural_reproduction(Hnm_imls,Y_low_az,sig)
         save_audio_to_path(save_path+"/iMagLS/",res,fs_sig)
+    """
     
-    return Hnm_imls, Hnm_mls, Hnm_high, Y_high_az, Y_low_az, fs
+    return Hnm_imls, Hnm_mls, Hnm_high, Y_high_az, Y_low_az,Y_high_lebedev,Y_low_lebedev, fs, omega, omega_az
 
 
 
