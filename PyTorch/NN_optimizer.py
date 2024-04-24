@@ -206,6 +206,104 @@ def loss_function_v2(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref, AK_f_c, fs, f
 
 
 
+
+
+
+
+
+def loss_function_v3(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,norm_flag):
+    # Calc the low-order HRTF in the Omega directions
+    p_lebedev = f.spatial_interpolation(Hnm,Y_lebedev,False)
+    
+    # Calculate low order p in time (to evaluate it's ILD)
+    p_az_t  = f.spatial_interpolation(Hnm,Y_az,True)
+    
+    # Calc the NMSE and Magnitude error for each set of Hnm
+    e_nmse = f.clc_e_nmse(p_ref,p_lebedev,norm_flag)
+    e_mag  = f.clc_e_mag(p_ref,p_lebedev,norm_flag)
+    
+    # Calculate the ILD error for each low-order representation
+    ILD      = ak.clc_ILD(p_az_t, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    e_ILD    = torch.mean(torch.abs(ILD_ref - ILD),dim=0) #avarage over frequencies bands
+
+    # Calculate colorization error
+    e_color_fc_lr_space = ak.calc_color(p_ref_az_t,p_az_t,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    e_color_fc_space    = torch.mean(e_color_fc_lr_space,dim=2)
+    e_color_fc          = torch.mean(e_color_fc_space,dim=1)
+    e_color             = torch.abs(1 - torch.abs(torch.mean(e_color_fc,dim=0))) # good if close to zero
+    
+    
+
+    # Calculate the Enargy error for each low-order representation
+    e_mag_diff = clc_e_mag_diff(p_lebedev)
+    
+    # Get error band indexs
+    f_vec   = np.arange(0,e_mag.shape[0])*((fs/2)/(e_mag.shape[0]-1))
+    idx_min = (np.abs(f_vec - f_band[0])).argmin()
+    idx_max = (np.abs(f_vec - f_band[1])).argmin()
+    
+    idx_max_mag = (np.abs(f_vec - fs/2)).argmin()
+    idx_min_mag = (np.abs(f_vec - 2e3)).argmin()
+    
+    # Calc error over frequencies and over directions
+    lambda_0 = lambda_vec[0]
+    lambda_1 = lambda_vec[1]
+    lambda_2 = lambda_vec[2]
+    lambda_3 = lambda_vec[3]
+    lambda_4 = lambda_vec[4]
+
+    e_total  =  lambda_0*torch.norm(e_ILD,dim=0) + lambda_1*torch.norm(e_nmse,dim=0) + lambda_2*torch.norm(e_mag[idx_min_mag:idx_max_mag],dim=0) + lambda_3*torch.norm(e_mag_diff[idx_min_mag:idx_max_mag],dim=0) + lambda_4*e_color
+    
+    e_mag_diff = torch.norm(e_mag_diff[idx_min_mag:idx_max_mag],dim=0)
+
+    output_dict = {
+        "e_total": e_total,
+        "e_ILD": e_ILD,
+        "e_nmse": e_nmse,
+        "e_mag": e_mag,
+        "ILD": ILD,
+        "e_mag_diff": e_mag_diff,
+        "e_color": e_color
+    }
+
+    return output_dict
+
+
+def calc_positive_grad(Hnm,Y,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft):
+    p_space_f_lr = f.spatial_interpolation(Hnm,Y,True)
+    x = ak.calc_gammatone_spectrum(p_space_f_lr,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+
+    x = 10 * torch.log10(x)
+    x_pos_grad = torch.zeros(x.shape[0] - 1, x.shape[1], x.shape[2], dtype=x.dtype, device=x.device)
+    
+    
+    # Calculate the gradient
+    for f_idx in range(x.shape[0] - 1):
+        x_pos_grad[f_idx, :, :] = x[f_idx + 1, :, :] - x[f_idx, :, :]
+    
+    # Take only the positive values
+    x_pos_grad[x_pos_grad < 0] = 0
+    
+    # Display using imshow
+    plt.imshow(x_pos_grad[:,::5, 0].detach().cpu().numpy(), cmap='bone', origin='lower')  # Assuming the first dimension represents frequency
+    plt.colorbar()  # Add colorbar
+    plt.title("Positive Gradient of ERB spectrum")
+    plt.xlabel("angle indices")
+    plt.ylabel("ERB filter idex")
+    plt.show()
+
+    return x_pos_grad
+
+def do_rms(sig):
+    # Averaging over time (RMS)
+    # Calculate root mean square (rms) along the last axis
+    rms_values = np.sqrt(np.mean(np.square(sig.time), axis=-1))
+    # Squeeze the array to remove axes with length 1
+    rms_values_squeezed = np.squeeze(rms_values)
+    # Convert to dB scale
+    sig_rms_dB = 20 * np.log10(rms_values_squeezed)
+    return sig_rms_dB
+
 def binaural_reproduction(Hnm,Y,sig):
     
     HRIR = f.spatial_interpolation(Hnm,Y,True)
@@ -319,6 +417,7 @@ def import_matlab_data(data_path,device,shutup):
     AK_C  = torch.from_numpy(AK_C).to(device)
     
     if not(shutup):
+        print("\n\n----------Variables------------")
         print("p_f_high_lebedev",p_f_high_lebedev.shape, "\t",p_f_high_lebedev.dtype)
         print("ILD_ref \t",ILD_ref.shape, "\t\t",ILD_ref.dtype)
         print("")
@@ -375,9 +474,11 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
     optimizer = torch.optim.SGD(model.parameters(), lr=0.00003, momentum=0.9)
     optimizer.zero_grad()
 
-    x = Hnm_mls
+    x = Hnm_mls  # initial solution is Ambisonics MagLS
+    #x = Hnm_low # initial solution is Ambisonics LS
     x.to(device)
 
+    print("\n\n-----------NN summary---------")
     result = summary(model,input_size= x.shape,dtypes=[torch.complex128],verbose=2,col_width=13,
         col_names=["kernel_size","input_size", "output_size", "num_params", "mult_adds"], row_settings=["var_names"],)
 
@@ -385,7 +486,10 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
     h_mag = []
     h_ILD = []
     h_total = []
-    h_enrgy = []
+    h_diff = []
+    h_color = []
+
+    foo = calc_positive_grad(Hnm_high,Y_high_az,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
 
 
     for epoch in tqdm (range (epochs), desc="Loading..."):
@@ -395,34 +499,58 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
 
         # forward + backward + optimize
         output = model(x)
-        loss, e_ILD_after, e_nmse_after, e_mag_after,ILD_after,e_enrgy_after   = loss_function_v2(output,Y_low_lebedev,
-                                                                                    Y_low_az,p_f_high_lebedev,p_ref_az_t,ILD_ref,
-                                                                                    AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
-                                                                                    nfft,lambda_vec,norm_flag=False)
+        output_dict   = loss_function_v3(output,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                         ILD_ref,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                         lambda_vec,norm_flag=False)
 
-        loss.backward(retain_graph=True)
+        
+        output_dict["e_total"].backward(retain_graph=True)
         optimizer.step()
 
-        h_enrgy     = np.append(h_enrgy,e_enrgy_after.detach().cpu().numpy()*lambda_vec[3])
-        e_ILD_after = torch.mean(torch.abs(ILD_ref - e_ILD_after),dim=0) #avarage over frequencies bands
+        # This line calculate and plots the positive gradient with acording to frequcny
+        #foo = calc_positive_grad(output,Y_low_az,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+
+
+        h_color     = np.append(h_color,output_dict["e_color"].detach().cpu().numpy())
+        h_diff     = np.append(h_diff,output_dict["e_mag_diff"].detach().cpu().numpy()*lambda_vec[3])
+        
+        e_ILD_after = torch.mean(torch.abs(ILD_ref - output_dict["e_ILD"]),dim=0) #avarage over frequencies bands
         h_ILD       = np.append(h_ILD,torch.norm(e_ILD_after,dim=0).detach().cpu().numpy()*lambda_vec[0])
-        h_nmse      = np.append(h_nmse,torch.norm(e_nmse_after,dim=0).detach().cpu().numpy()*lambda_vec[1])
-        h_mag       = np.append(h_mag,torch.norm(e_mag_after,dim=0).detach().cpu().numpy()*lambda_vec[2])
-        h_total     = np.append(h_total,torch.norm(loss,dim=0).detach().cpu().numpy())
+        
+        h_nmse      = np.append(h_nmse,torch.norm(output_dict["e_nmse"],dim=0).detach().cpu().numpy()*lambda_vec[1])
+        h_mag       = np.append(h_mag,torch.norm(output_dict["e_mag"],dim=0).detach().cpu().numpy()*lambda_vec[2])
+        h_total     = np.append(h_total,torch.norm(output_dict["e_total"],dim=0).detach().cpu().numpy())
 
     if not(shutup):    
         print('Finished Training')
 
     if not(shutup):
-        plt.plot(h_nmse)
-        plt.plot(h_mag)
-        plt.plot(h_ILD)
-        plt.plot(h_enrgy)
+        max_value = np.max(h_nmse, axis=0)
+        normalized_h_nmse = h_nmse / max_value
+        
+        max_value = np.max(h_mag, axis=0)
+        normalized_h_mag = h_mag / max_value
+        
+        max_value = np.max(h_ILD, axis=0)
+        normalized_h_ILD = h_ILD / max_value
+        
+        max_value = np.max(h_diff, axis=0)
+        normalized_h_diff = h_diff / max_value
+
+        max_value = np.max(h_color, axis=0)
+        normalized_h_color = h_color / max_value
+
+        plt.plot(normalized_h_nmse)
+        plt.plot(normalized_h_mag)
+        plt.plot(normalized_h_ILD)
+        plt.plot(normalized_h_diff)
+        plt.plot(normalized_h_color)
         plt.grid()
         plt.xlabel("iterations")
         plt.ylabel("error")
         plt.title("Training Curves")
-        plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff"]);
+        plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff","e_color"]);
+        #plt.legend(["e_color"]);
         if is_save:
             plt.savefig(results_save_path+ "/Training_Curves.png")
         plt.show()
@@ -435,36 +563,48 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
 
     
     # Calc some plots
-    e_total_imls,e_ILD_imls, e_nmse_imls, e_mag_imls, ILD_imls = loss_function_v1(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
-                                                                                     AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
-                                                                                     nfft,lambda_vec,norm_flag=True)
-    e_total_ls,e_ILD_ls, e_nmse_ls, e_mag_ls, ILD_ls = loss_function_v1(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
-                                                                                     AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
-                                                                                     nfft,lambda_vec,norm_flag=True)
-    e_total_mls,e_ILD_mls, e_nmse_mls, e_mag_mls, ILD_mls = loss_function_v1(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
-                                                                                     AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
-                                                                                     nfft,lambda_vec,norm_flag=True)
-
-
-
-    e_ILD_imls  = e_ILD_imls.detach().cpu().numpy()
-    e_nmse_imls = e_nmse_imls.detach().cpu().numpy()
-    e_mag_imls  = e_mag_imls.detach().cpu().numpy()
-    ILD_imls    = ILD_imls.detach()
-
-    e_ILD_non_av_ls = torch.abs(ILD_ref - ILD_ls)
-    e_ILD_non_av_mls = torch.abs(ILD_ref - ILD_mls)
-    e_ILD_non_av_imls = torch.abs(ILD_ref - ILD_imls)
-
-
-    
     if not(shutup):
-        plt.plot(f_vec,e_nmse_ls)
-        plt.plot(f_vec,e_nmse_mls)
-        plt.plot(f_vec,e_nmse_imls)
-        plt.plot(f_vec,e_mag_ls)
-        plt.plot(f_vec,e_mag_mls)
-        plt.plot(f_vec,e_mag_imls)
+        res_imls  = loss_function_v3(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                         ILD_ref,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                         lambda_vec,norm_flag=True)
+        
+        res_ls    = loss_function_v3(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                         ILD_ref,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                         lambda_vec,norm_flag=True)
+        
+        res_mls   = loss_function_v3(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                         ILD_ref,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                         lambda_vec,norm_flag=True)
+        
+        
+        #res_imls = loss_function_v3(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
+        #                                                                                 AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
+        #                                                                                 nfft,lambda_vec,norm_flag=True)
+        #res_ls = loss_function_v3(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
+        #                                                                                 AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
+        #                                                                                 nfft,lambda_vec,norm_flag=True)
+        #res_mls = loss_function_v3(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,ILD_ref,
+        #                                                                                 AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,
+        #                                                                                 nfft,lambda_vec,norm_flag=True)
+    
+    
+    
+        e_ILD_imls  = res_imls["e_ILD"].detach().cpu().numpy()
+        e_nmse_imls = res_imls["e_nmse"].detach().cpu().numpy()
+        e_mag_imls  = res_imls["e_mag"].detach().cpu().numpy()
+        ILD_imls    = res_imls["ILD"].detach()
+    
+        e_ILD_non_av_ls = torch.abs(ILD_ref - res_ls["ILD"])
+        e_ILD_non_av_mls = torch.abs(ILD_ref - res_mls["ILD"])
+        e_ILD_non_av_imls = torch.abs(ILD_ref - res_imls["ILD"])
+
+
+        plt.plot(f_vec,res_ls["e_nmse"])
+        plt.plot(f_vec,res_mls["e_nmse"])
+        plt.plot(f_vec,res_imls["e_nmse"])
+        plt.plot(f_vec,res_ls["e_mag"])
+        plt.plot(f_vec,res_mls["e_mag"])
+        plt.plot(f_vec,res_imls["e_mag"])
         plt.xlim([99,20e3])
         plt.xscale('log')
         plt.xlabel("f[Hz]")
@@ -479,8 +619,8 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
         
     
         plt.plot(ang_vec,torch.mean(ILD_ref,dim=0))
-        plt.plot(ang_vec,torch.mean(ILD_ls,dim=0))
-        plt.plot(ang_vec,torch.mean(ILD_mls,dim=0))
+        plt.plot(ang_vec,torch.mean(res_ls["ILD"],dim=0))
+        plt.plot(ang_vec,torch.mean(res_mls["ILD"],dim=0))
         plt.plot(ang_vec,torch.mean(ILD_imls,dim=0))
         plt.grid()
         plt.xlabel("azimuth [deg]")
@@ -492,8 +632,8 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
             plt.savefig(results_save_path+ "/ILD_Curves.png")
         plt.show()
         
-        plt.plot(ang_vec,e_ILD_ls)
-        plt.plot(ang_vec,e_ILD_mls)
+        plt.plot(ang_vec,res_ls["e_ILD"])
+        plt.plot(ang_vec,res_mls["e_ILD"])
         plt.plot(ang_vec,e_ILD_imls)
         plt.grid()
         plt.xlabel("azimuth [deg]")

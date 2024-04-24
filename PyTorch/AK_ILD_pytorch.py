@@ -53,6 +53,113 @@ def clc_ILD(P, f_c, fs, f_lim, Nmax, n, C, nfft):
     
     return ILD
 
+def calc_gammatone_spectrum(p,f_c, fs, f_lim, Nmax, n, C, nfft):
+    # arrange dims
+    p = torch.permute(p, (0, 2, 1))
+    x_l = torch.squeeze(p[:, 0, :]) # space x left/right x time (361, 2, 768)
+    x_l = x_l.transpose(0, 1)
+    x_r = torch.squeeze(p[:, 1, :])
+    x_r = x_r.transpose(0, 1)
+    # get length and channels
+    N = x_l.shape[0]  # ir length
+    c = x_l.shape[1]  # ir num. of channels
+    # set outputs
+    out_L = torch.zeros((n, c))
+    out_R = torch.zeros((n, c))
+    # find point where filter decayed for 60 dB
+    Ncur = N
+    # get indices of upper and lower frequency limit
+    f_lim_id    = [round(f_lim[0] / (fs / Ncur)) + 1, round(f_lim[1] / (fs / Ncur)) + 1]
+    f_lim_id[0] = max(f_lim_id[0], 2)  # make sure we don't use the 0 Hz bin
+
+    for k in range(n):
+        # filter input signals
+        t11 = torch.abs(torch.fft.fft(C[:, k], Ncur, dim=0)).reshape(-1, 1)
+        t1 = t11.repeat(1, c)
+        t2 = torch.abs(torch.fft.fft(x_l, Ncur, dim=0)) ** 2
+        X_L = t1 * t2
+        t2 = torch.abs(torch.fft.fft(x_r, Ncur, dim=0)) ** 2
+        X_R = t1 * t2
+
+        # get energy
+        X_L = torch.sum(X_L[f_lim_id[0]:f_lim_id[1], :], dim=0)
+        X_R = torch.sum(X_R[f_lim_id[0]:f_lim_id[1], :], dim=0)
+        # collect output
+        out_L[k, :] = X_L
+        out_R[k, :] = X_R
+    
+    out = torch.cat((out_L.unsqueeze(2), out_R.unsqueeze(2)), dim=2)
+    return out
+
+
+
+def calc_color(p,p_hat,f_c, fs, f_lim, Nmax, n, C, nfft):
+    # arrange dims
+    p = torch.permute(p, (0, 2, 1))
+    x_l = torch.squeeze(p[:, 0, :]) # space x left/right x time (361, 2, 768)
+    x_l = x_l.transpose(0, 1)
+    x_r = torch.squeeze(p[:, 1, :])
+    x_r = x_r.transpose(0, 1)
+
+    p_hat = torch.permute(p_hat, (0, 2, 1))
+    x_l_hat = torch.squeeze(p_hat[:, 0, :]) # space x left/right x time (361, 2, 768)
+    x_l_hat = x_l_hat.transpose(0, 1)
+    x_r_hat = torch.squeeze(p_hat[:, 1, :])
+    x_r_hat = x_r_hat.transpose(0, 1)
+    
+    # get length and channels
+    N = x_l.shape[0]  # ir length
+    c = x_l.shape[1]  # ir num. of channels
+    
+
+    # Filter x with filter bank and calculate error in each band
+    out_L = torch.zeros((n, c))
+    out_R = torch.zeros((n, c))
+    C = torch.abs(C) # New O.B
+    
+    #C_db_tmp = 10 * torch.log10(torch.abs(C))
+    #C_db = torch.zeros_like(C_db_tmp)
+    # -------------------------------------  filter signals and get ERB error
+    for k in range(n):
+        # find point where filter decayed for 60 dB
+        #C_db = C_db_tmp[:, k]
+        Ncur = N
+
+        # get indices of upper and lower frequency limit
+        f_lim_id    = [round(f_lim[0] / (fs / Ncur)) + 1, round(f_lim[1] / (fs / Ncur)) + 1]
+        f_lim_id[0] = max(f_lim_id[0], 2)  # make sure we don't use the 0 Hz bin
+
+        # filter input signals
+        t11 = torch.abs(torch.fft.fft(C[:, k], Ncur, dim=0)).reshape(-1, 1)
+        t1 = t11.repeat(1, c)
+        t2 = torch.abs(torch.fft.fft(x_l, Ncur, dim=0)) ** 2
+        X_L = t1 * t2
+        t2 = torch.abs(torch.fft.fft(x_r, Ncur, dim=0)) ** 2
+        X_R = t1 * t2
+
+        # get energy
+        X_L = torch.sum(X_L[f_lim_id[0]:f_lim_id[1], :], dim=0)
+        X_R = torch.sum(X_R[f_lim_id[0]:f_lim_id[1], :], dim=0)
+
+        # filter input signals
+        t11 = torch.abs(torch.fft.fft(C[:, k], Ncur, dim=0)).reshape(-1, 1)
+        t1 = t11.repeat(1, c)
+        t2 = torch.abs(torch.fft.fft(x_l_hat, Ncur, dim=0)) ** 2
+        X_L_hat = t1 * t2
+        t2 = torch.abs(torch.fft.fft(x_r_hat, Ncur, dim=0)) ** 2
+        X_R_hat = t1 * t2
+
+        # get energy
+        X_L_hat = torch.sum(X_L_hat[f_lim_id[0]:f_lim_id[1], :], dim=0)
+        X_R_hat = torch.sum(X_R_hat[f_lim_id[0]:f_lim_id[1], :], dim=0)
+
+        # get color value
+        out_L[k, :] = 10 * torch.log10(torch.abs(X_L_hat) / torch.abs(X_L))
+        out_R[k, :] = 10 * torch.log10(torch.abs(X_R_hat) / torch.abs(X_R))
+
+    out = torch.cat((out_L.unsqueeze(2), out_R.unsqueeze(2)), dim=2)
+    return out
+
 
 def ERBFilterBank(x, fcoefs=None):
     if x.ndim < 1:
