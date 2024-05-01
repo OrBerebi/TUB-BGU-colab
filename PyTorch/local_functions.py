@@ -52,4 +52,28 @@ def clc_e_mag(p_ref,p_hat,norm_flag=True):
 
     return e_mag_norm
 
+def clc_e_mag_v2(p_ref,p_hat,M_dB,norm_flag=True):
+
+    #calc the absolute mean diffrence
+    e_mag_space_freq_lr = torch.abs(torch.abs(p_ref) - torch.abs(p_hat))
+
+    # mask the only posirive gradient bins
+    if M_dB.numel() > 0: 
+        #The tensor is not empty
+        M_linear = 10 ** (M_dB / 10)
+        e_mag_space_freq_lr = e_mag_space_freq_lr * M_linear 
+    
+
+    # norm and avarage over all directions ears and freqncies
+    if norm_flag:
+        e_mag_freq_lr = torch.norm(e_mag_space_freq_lr, dim=0).squeeze() / torch.norm(torch.abs(p_ref), dim=0).squeeze() # || || over directions
+    else:
+        e_mag_freq_lr = torch.norm(e_mag_space_freq_lr, dim=0).squeeze() # || || over directions
+        
+    
+    e_mag_freq_lr_db = 20*torch.log10(e_mag_freq_lr)                 # calc dB error
+    e_mag_freq = torch.mean(e_mag_freq_lr_db,dim = 1).squeeze()      # E[] over ears
+    
+    return e_mag_freq
+
 

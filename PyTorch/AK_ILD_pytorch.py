@@ -5,7 +5,7 @@ from scipy.signal import lfilter
 
 
 def clc_ILD(P, f_c, fs, f_lim, Nmax, n, C, nfft):
-    P = torch.permute(P, (0, 2, 1))
+    P   = torch.permute(P, (0, 2, 1))
     x_l = torch.squeeze(P[:, 0, :]) # space x left/right x time (361, 2, 768)
     x_l = x_l.transpose(0, 1)
     x_r = torch.squeeze(P[:, 1, :])
@@ -32,7 +32,7 @@ def clc_ILD(P, f_c, fs, f_lim, Nmax, n, C, nfft):
         Ncur = N
 
         # get indices of upper and lower frequency limit
-        f_lim_id = [round(f_lim[0] / (fs / Ncur)) + 1, round(f_lim[1] / (fs / Ncur)) + 1]
+        f_lim_id = [round(f_lim[0] / (fs / Ncur)) , round(f_lim[1] / (fs / Ncur)) ]
         f_lim_id[0] = max(f_lim_id[0], 2)  # make sure we don't use the 0 Hz bin
 
         # filter input signals
@@ -69,7 +69,7 @@ def calc_gammatone_spectrum(p,f_c, fs, f_lim, Nmax, n, C, nfft):
     # find point where filter decayed for 60 dB
     Ncur = N
     # get indices of upper and lower frequency limit
-    f_lim_id    = [round(f_lim[0] / (fs / Ncur)) + 1, round(f_lim[1] / (fs / Ncur)) + 1]
+    f_lim_id    = [round(f_lim[0] / (fs / Ncur)) , round(f_lim[1] / (fs / Ncur)) ]
     f_lim_id[0] = max(f_lim_id[0], 2)  # make sure we don't use the 0 Hz bin
 
     for k in range(n):
@@ -126,7 +126,7 @@ def calc_color(p,p_hat,f_c, fs, f_lim, Nmax, n, C, nfft):
         Ncur = N
 
         # get indices of upper and lower frequency limit
-        f_lim_id    = [round(f_lim[0] / (fs / Ncur)) + 1, round(f_lim[1] / (fs / Ncur)) + 1]
+        f_lim_id    = [round(f_lim[0] / (fs / Ncur)), round(f_lim[1] / (fs / Ncur))]
         f_lim_id[0] = max(f_lim_id[0], 2)  # make sure we don't use the 0 Hz bin
 
         # filter input signals
@@ -154,8 +154,8 @@ def calc_color(p,p_hat,f_c, fs, f_lim, Nmax, n, C, nfft):
         X_R_hat = torch.sum(X_R_hat[f_lim_id[0]:f_lim_id[1], :], dim=0)
 
         # get color value
-        out_L[k, :] = 10 * torch.log10(torch.abs(X_L_hat) / torch.abs(X_L))
-        out_R[k, :] = 10 * torch.log10(torch.abs(X_R_hat) / torch.abs(X_R))
+        out_L[k, :] = torch.abs(X_L_hat) / torch.abs(X_L)
+        out_R[k, :] = torch.abs(X_R_hat) / torch.abs(X_R)
 
     out = torch.cat((out_L.unsqueeze(2), out_R.unsqueeze(2)), dim=2)
     return out

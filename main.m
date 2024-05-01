@@ -31,7 +31,7 @@ set(0,'DefaultAxesTitleFontSizeMultiplier', 1);
 
 % Flags
 is_plot = true;
-is_save=true;
+is_save = false;
 
 
 % HRTF file path and name
@@ -54,7 +54,7 @@ clear ph_DOA_res ph_DOA_max ph_DOA_omega_az th_DOA_omega_az
 
 
 % Save data path
-save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/11_04_24/";
+save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/25_04_24/";
 mkdir(save_name)
 [fPath, fName, fExt] = fileparts(file_path_HRTF);
 tmp = "/"+fName + "_N"+num2str(N_low)+".mat";
@@ -120,6 +120,8 @@ disp("calculate the Magnitude error")
 [ILD_ref,f_c] = get_ILD_curves(p_t_high_az,f_band,fs);
 [ILD_mls,~] = get_ILD_curves(p_t_mls_az,f_band,fs);
 [ILD_ls,~]  = get_ILD_curves(p_t_low_az,f_band,fs);
+%[X_ref,f_c] = get_gammatone(p_t_high_az,f_band,fs);
+
 e_ILD_ls = squeeze(mean(abs(ILD_ref - ILD_ls),1)).';
 e_ILD_mls = squeeze(mean(abs(ILD_ref - ILD_mls),1)).';
 e_ILD_ls_freq  = squeeze(mean(abs(ILD_ref - ILD_ls),2));
@@ -132,6 +134,8 @@ if is_save
     save(save_name,"p_f_high_lebedev","ILD_ref","f_band","Hnm_low","Hnm_mls","Hnm_high","fs","N_low","N_high","f_vec","ang_vec","Y_high_lebedev","Y_high_az","Y_low_lebedev","Y_low_az","omega","omega_az");
 
 end
+
+
 if is_plot
     disp("Plotting the HRIR for a certain direction")
     t = linspace(0,nfft/fs,nfft);
@@ -272,4 +276,10 @@ function [ILD_no_av,f_c] = get_ILD_curves(P_t,f_band,fs)
     Pl = P_t(:,:,1).';
     Pr = P_t(:,:,2).';
     [ILD_no_av,f_c,~] = AKerbILD(Pl, Pr, f_band, fs);
+end
+
+function [x_pos_grad,f_c] = get_gammatone(P_t,f_band,fs)
+    Pl = P_t(:,:,1).';
+    Pr = P_t(:,:,2).';
+    [x_pos_grad,f_c] = Gammatone_filt(Pl, Pr, f_band, fs);
 end
