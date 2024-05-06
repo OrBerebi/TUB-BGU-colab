@@ -5,7 +5,7 @@
 
 clc
 clear
-close all
+%close all
 restoredefaultpath;
 clear RESTOREDEFAULTPATH_EXECUTED
 set(0,'DefaultFigureWindowStyle','docked')
@@ -42,8 +42,10 @@ N_low  = 1;
 N_high = 42;
 
 % Cutoff frequency for MaleS preprocessing
-cutOffFreq = 1.5e3;
+%cutOffFreq = 1.5e3;
+cutOffFreq = 0.5e3;
 % Frequency band for evaluating ILD curves
+%f_band = [1.5e3, 20e3];
 f_band = [1.5e3, 20e3];
 
 % Omega_az
@@ -54,7 +56,7 @@ clear ph_DOA_res ph_DOA_max ph_DOA_omega_az th_DOA_omega_az
 
 
 % Save data path
-save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/25_04_24/";
+save_name = "/Users/orberebi/Documents/GitHub/TUB-BGU-colab/matlab_saved_data/06_05_24-phaseMagLS-500/";
 mkdir(save_name)
 [fPath, fName, fExt] = fileparts(file_path_HRTF);
 tmp = "/"+fName + "_N"+num2str(N_low)+".mat";
@@ -152,6 +154,7 @@ if is_plot
     legend(["NMSE - LS","NMSE - MagLS","Magnitude Error - LS","Magnitude Error - MagLS"],"Location","northwest")
     grid on
     xlim([50 20e3])
+    ylim([-40 5])
     title("Frequency analysis averaged over dense lebedev grid and over both ears")
     xlabel("Frequency [Hz]")
     ylabel("Error [dB]")
@@ -249,7 +252,8 @@ function Hnm = get_MagLS_coeff(hobj,nfft, N, Y_N, Y_high, cutOffFreq)
     fs = hobj.fs;
     f_vec = linspace(0,fs/2,size(H,2)).';
     Hnm = [];
-    [H_l_nm_MagLS, H_r_nm_MagLS] = computeMagLS_imp(H, f_vec, N, Y_N.', cutOffFreq, Y_high.');
+    %[H_l_nm_MagLS, H_r_nm_MagLS] = computeMagLS_imp(H, f_vec, N, Y_N.', cutOffFreq, Y_high.');
+    [H_l_nm_MagLS, H_r_nm_MagLS] = computeMagLS_imp_phase(H, f_vec, N, Y_N.', cutOffFreq, Y_high.');
     Hnm = cat(3,Hnm,H_l_nm_MagLS);
     Hnm = cat(3,Hnm,H_r_nm_MagLS);
     Hnm = permute(Hnm,[2,1,3]);

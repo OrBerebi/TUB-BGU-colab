@@ -1,6 +1,7 @@
 
 import os
 import sys
+import time
 import platform
 import torch
 import torchaudio
@@ -24,6 +25,7 @@ import sofar as sf
 from torchinfo import summary
 
 import baumgartner2014 as bam
+import pickle
 
 
 
@@ -297,6 +299,8 @@ def loss_function_v4(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref,ITD_ref,pos_gr
     #ITD = itd_est.get_ITD_onset_threshold(p_az_t.float(),fs,-20, 3e3,False) #returns the micro sec ITD usinng the onset method
     #ITD = itd_est.get_ITD_CC(p_az_t.float(),fs, 3e3,False) #returns the micro sec ITD usinng the onset method
     ITD = itd_est.get_ITD_group_delay(p_az_t.float(),fs, 1.5e3,False) #returns the micro sec ITD usinng the onset method
+
+    
     e_ITD = torch.mean(torch.abs(ITD_ref - ITD)) # avarage over directions
 
 
@@ -783,11 +787,10 @@ def import_matlab_data(data_path,device,shutup):
 
     return omega, omega_az, fs, f_band, N_low, N_high, f_vec, ang_vec, nfft, Hnm_high, Hnm_low, Hnm_mls, Y_high_lebedev, Y_high_az, Y_low_lebedev, Y_low_az, p_f_high_lebedev, ILD_ref, p_high_az_t, AK_Nmax, AK_f_c, AK_n, AK_C, p_ref_az_t
     
-def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=True,is_save=False):
+def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],dry_sig_name="casta.wav",shutup=True,is_save=False):
 
     figures_savepath = os.path.join( results_save_path,"training_figures")
 
-    
     # Setup device
     has_gpu = torch.cuda.is_available()
     has_mps = torch.backends.mps.is_built()
@@ -828,8 +831,15 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
         HRIR_name = "/ref.sofa"
         save_as_sofa(Hnm_high,Y_high_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
         
+        path_sofa = save_path_sofa + HRIR_name
+        fig_name = "left_ear_group_delay-reference.png"
+        plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
+        
         HRIR_name = "/MagLS.sofa"
         save_as_sofa(Hnm_mls,Y_low_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
+        path_sofa = save_path_sofa + HRIR_name
+        fig_name = "left_ear_group_delay-MagLS.png"
+        plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
     
     
 
@@ -930,60 +940,105 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
     if not(shutup):    
         print('Finished Training')
 
+    
+    """
+    max_value = np.max(h_nmse, axis=0)
+    normalized_h_nmse = h_nmse / max_value
+    
+    max_value = np.max(h_mag, axis=0)
+    normalized_h_mag = h_mag / max_value
+    
+    max_value = np.max(h_ILD, axis=0)
+    normalized_h_ILD = h_ILD / max_value
+    
+    max_value = np.max(h_diff, axis=0)
+    normalized_h_diff = h_diff / max_value
+
+    max_value = np.max(h_color, axis=0)
+    normalized_h_color = h_color / max_value
+    
+    max_value = np.max(h_ITD, axis=0)
+    normalized_h_ITD = h_ITD / max_value
+
+    max_value = np.max(h_color_weighted, axis=0)
+    normalized_h_color_weighted = h_color_weighted / max_value
+    
+    max_value = np.max(h_mag_weighted, axis=0)
+    normalized_h_mag_weighted = h_mag_weighted / max_value
+    """
+    normalized_h_nmse  = h_nmse
+    normalized_h_mag   = h_mag
+    normalized_h_ILD   = h_ILD
+    normalized_h_diff  = h_diff
+    normalized_h_color = h_color
+    normalized_h_ITD   = h_ITD
+    normalized_h_color_weighted = h_color_weighted
+    normalized_h_mag_weighted = h_mag_weighted
+    
+    plt.plot(normalized_h_nmse)
+    plt.plot(normalized_h_mag)
+    plt.plot(normalized_h_ILD)
+    plt.plot(normalized_h_diff)
+    plt.plot(normalized_h_color)
+    plt.plot(normalized_h_ITD)
+    plt.plot(normalized_h_color_weighted)
+    plt.plot(normalized_h_mag_weighted)
+    plt.grid()
+    plt.xlabel("iterations")
+    plt.ylabel("error")
+    plt.title("Training Curves")
+    plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff","e_color","e_ITD","e_color_weighted","e_mag_weighted"]);
+    
+    if is_save:
+        plt.savefig(figures_savepath+ "/Training_Curves.png")
+    
     if not(shutup):
-        max_value = np.max(h_nmse, axis=0)
-        normalized_h_nmse = h_nmse / max_value
-        
-        max_value = np.max(h_mag, axis=0)
-        normalized_h_mag = h_mag / max_value
-        
-        max_value = np.max(h_ILD, axis=0)
-        normalized_h_ILD = h_ILD / max_value
-        
-        max_value = np.max(h_diff, axis=0)
-        normalized_h_diff = h_diff / max_value
-
-        max_value = np.max(h_color, axis=0)
-        normalized_h_color = h_color / max_value
-        
-        max_value = np.max(h_ITD, axis=0)
-        normalized_h_ITD = h_ITD / max_value
-
-        max_value = np.max(h_color_weighted, axis=0)
-        normalized_h_color_weighted = h_color_weighted / max_value
-        
-        max_value = np.max(h_mag_weighted, axis=0)
-        normalized_h_mag_weighted = h_mag_weighted / max_value
-        
-        plt.plot(normalized_h_nmse)
-        plt.plot(normalized_h_mag)
-        plt.plot(normalized_h_ILD)
-        plt.plot(normalized_h_diff)
-        plt.plot(normalized_h_color)
-        plt.plot(normalized_h_ITD)
-        plt.plot(normalized_h_color_weighted)
-        plt.plot(normalized_h_mag_weighted)
-        plt.grid()
-        plt.xlabel("iterations")
-        plt.ylabel("error")
-        plt.title("Training Curves")
-        plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff","e_color","e_ITD","e_color_weighted","e_mag_weighted"]);
-        if is_save:
-            plt.savefig(figures_savepath+ "/Training_Curves.png")
         plt.show()
+    else:
+        plt.close() 
+    
+    
 
+    # Save the initial and final values 
+    # Define the arrays
+    h1 = [h_nmse[0], h_nmse[-1]]
+    h2 = [h_mag[0], h_mag[-1]]
+    h3 = [h_ILD[0], h_ILD[-1]]
+    h4 = [h_diff[0], h_diff[-1]]
+    h5 = [h_color[0], h_color[-1]]
+    h6 = [h_ITD[0], h_ITD[-1]]
+    h7 = [h_color_weighted[0], h_color_weighted[-1]]
+    h8 = [h_mag_weighted[0], h_mag_weighted[-1]]
+    
+    # Define the file path
+    file_path = figures_savepath + "/error_values.txt"
+    
+    # Define array names and values
+    arrays = [("nmse error [dB]", h1), ("magnitude error [dB]", h2), ("ILD error [dB]", h3),("diff error", h4),("color error", h5),("ITD error [samples]", h6),("color weighted error ", h7),("magnitude weighted error [dB]", h8)]
+    
+    # Write the arrays to the file
+    with open(file_path, "w") as file:
+        for name, values in arrays:
+            file.write(f"{name}:\n")
+            file.write(f"{values[0]}, {values[1]}\n\n")
+    
+
+
+
+        
+    plt.plot(h_qe)
+    plt.plot(h_pe)
+    plt.grid()
+    plt.xlabel("iterations")
+    plt.ylabel("error")
+    plt.title("Training Curves")
+    plt.legend(["Quadrant errors (%)","Local polar RMS error (deg)"]);
+    if is_save:
+        plt.savefig(figures_savepath+ "/qe_pe_curves.png")
     if not(shutup):
-        
-        plt.plot(h_qe)
-        plt.plot(h_pe)
-        plt.grid()
-        plt.xlabel("iterations")
-        plt.ylabel("error")
-        plt.title("Training Curves")
-        plt.legend(["Quadrant errors (%)","Local polar RMS error (deg)"]);
-        if is_save:
-            plt.savefig(figures_savepath+ "/qe_pe_curves.png")
         plt.show()
+    else:
+        plt.close()
 
     Hnm_imls = output.detach()
 
@@ -994,108 +1049,131 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
     #ITD_mls = itd_est.get_ITD_onset_threshold(x_lr,fs,trashhold,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
     ITD_mls = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
 
+
+    ITD_ref_tmp = ITD_ref.detach().numpy()
+    ITD_ref_tmp = (ITD_ref_tmp/fs)*1e6
+    ITD_imls = ITD_imls.detach().numpy()
+    ITD_imls = (ITD_imls/fs)*1e6
+    ITD_mls = ITD_mls.detach().numpy()
+    ITD_mls = (ITD_mls/fs)*1e6
+    
+    plt.figure
+    plt.plot(ITD_ref_tmp, label='Reference')
+    plt.plot(ITD_imls, label='iMagLS')
+    plt.plot(ITD_mls, label='MagLS')
+    plt.xlabel('Incident angle')
+    plt.ylabel('Value [micro sec]')
+    plt.title('ITD')
+    plt.grid(True)
+    plt.legend()
+    if is_save:
+        plt.savefig(figures_savepath+ "/ITD_curves.png")
     if not(shutup):
-        plt.figure
-        plt.plot(ITD_ref, label='Reference')
-        plt.plot(ITD_imls.detach().numpy(), label='iMagLS')
-        plt.plot(ITD_mls.detach().numpy(), label='MagLS')
-        plt.xlabel('Incident angle')
-        plt.ylabel('Value [micro sec]')
-        plt.title('ITD')
-        plt.grid(True)
-        plt.legend()
-        if is_save:
-            plt.savefig(figures_savepath+ "/ITD_curves.png")
         plt.show()
+    else:
+        plt.close()
+        
     # Reassign the original low frequency coefficients
     idx_min = (np.abs(f_vec - 2e3)).argmin()
     #Hnm_imls[:,0:idx_min,:] = Hnm_mls[:,0:idx_min,:]
 
     
     # Calc some plots
+    
+    res_imls   = loss_function_v4(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                     ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                     lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
+    
+    res_ls   = loss_function_v4(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                     ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                     lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
+    
+    res_mls   = loss_function_v4(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                     ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                     lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
+    
+
+    e_ILD_imls  = res_imls["e_ILD"].detach().cpu().numpy()
+    e_nmse_imls = res_imls["e_nmse"].detach().cpu().numpy()
+    e_mag_imls  = res_imls["e_mag"].detach().cpu().numpy()
+    ILD_imls    = res_imls["ILD"].detach()
+
+    e_ILD_non_av_ls = torch.abs(ILD_ref - res_ls["ILD"])
+    e_ILD_non_av_mls = torch.abs(ILD_ref - res_mls["ILD"])
+    e_ILD_non_av_imls = torch.abs(ILD_ref - res_imls["ILD"])
+
+
+    plt.plot(f_vec,res_ls["e_nmse"])
+    plt.plot(f_vec,res_mls["e_nmse"])
+    plt.plot(f_vec,res_imls["e_nmse"])
+    plt.plot(f_vec,res_ls["e_mag"])
+    plt.plot(f_vec,res_mls["e_mag"])
+    plt.plot(f_vec,res_imls["e_mag"])
+    plt.xlim([99,20e3])
+    plt.xscale('log')
+    plt.xlabel("f[Hz]")
+    plt.grid(which='both')
+    plt.title("Avaraged per ear NMSE and Magnitude Errors")
+    plt.legend(["LS NMSE","MagLS NMSE","iMagLS NMSE","LS magnitude","MagLS magnitude","iMagLS magnitude"])
+    plt.ylabel("error[dB]");
+    if is_save:
+        plt.savefig(figures_savepath+ "/freq_errors.png")
     if not(shutup):
-        res_imls   = loss_function_v4(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                         ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                         lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
-        
-        res_ls   = loss_function_v4(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                         ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                         lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
-        
-        res_mls   = loss_function_v4(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                         ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                         lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
-        
+        plt.show()
+    else:
+        plt.close()
     
-        e_ILD_imls  = res_imls["e_ILD"].detach().cpu().numpy()
-        e_nmse_imls = res_imls["e_nmse"].detach().cpu().numpy()
-        e_mag_imls  = res_imls["e_mag"].detach().cpu().numpy()
-        ILD_imls    = res_imls["ILD"].detach()
     
-        e_ILD_non_av_ls = torch.abs(ILD_ref - res_ls["ILD"])
-        e_ILD_non_av_mls = torch.abs(ILD_ref - res_mls["ILD"])
-        e_ILD_non_av_imls = torch.abs(ILD_ref - res_imls["ILD"])
+
+    plt.plot(ang_vec,torch.mean(ILD_ref,dim=0))
+    plt.plot(ang_vec,torch.mean(res_ls["ILD"],dim=0))
+    plt.plot(ang_vec,torch.mean(res_mls["ILD"],dim=0))
+    plt.plot(ang_vec,torch.mean(ILD_imls,dim=0))
+    plt.grid()
+    plt.xlabel("azimuth [deg]")
+    plt.ylabel("ILD value [dB]")
+    plt.legend(["Reference","LS","MagLS","iMagLS"])
+    plt.xlim((ang_vec[0], ang_vec[-1]))
+    plt.title("ILD Value average over all central frequencies");
+    if is_save:
+        plt.savefig(figures_savepath+ "/ILD_Curves.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+    
+    plt.plot(ang_vec,res_ls["e_ILD"])
+    plt.plot(ang_vec,res_mls["e_ILD"])
+    plt.plot(ang_vec,e_ILD_imls)
+    plt.grid()
+    plt.xlabel("azimuth [deg]")
+    plt.ylabel("Error [dB]")
+    plt.legend(["LS","MagLS","iMagLS"])
+    plt.xlim((ang_vec[0], ang_vec[-1]))
+    plt.title("ILD error average over all central frequencies");
+    if is_save:
+        plt.savefig(figures_savepath+ "/ILD_errors_ang.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
 
 
-        plt.plot(f_vec,res_ls["e_nmse"])
-        plt.plot(f_vec,res_mls["e_nmse"])
-        plt.plot(f_vec,res_imls["e_nmse"])
-        plt.plot(f_vec,res_ls["e_mag"])
-        plt.plot(f_vec,res_mls["e_mag"])
-        plt.plot(f_vec,res_imls["e_mag"])
-        plt.xlim([99,20e3])
-        plt.xscale('log')
-        plt.xlabel("f[Hz]")
-        plt.grid(which='both')
-        plt.title("Avaraged per ear NMSE and Magnitude Errors")
-        plt.legend(["LS NMSE","MagLS NMSE","iMagLS NMSE","LS magnitude","MagLS magnitude","iMagLS magnitude"])
-        plt.ylabel("error[dB]");
-        if is_save:
-            plt.savefig(figures_savepath+ "/freq_errors.png")
+    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_ls,dim=1), '--o')
+    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_mls,dim=1), '--o')
+    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_imls,dim=1), '--o')
+    plt.grid()
+    plt.xlabel("f[Hz]")
+    plt.ylabel("ILD error [dB]")
+    plt.legend(["LS","MagLS","iMagLS"])
+    plt.xlim((AK_f_c[0], AK_f_c[-1]))
+    plt.title("ILD Error average over all lateral Directions");
+    if is_save:
+        plt.savefig(figures_savepath+ "/ILD_errors_freq.png")
+    if not(shutup):
         plt.show()
-        
-        
-    
-        plt.plot(ang_vec,torch.mean(ILD_ref,dim=0))
-        plt.plot(ang_vec,torch.mean(res_ls["ILD"],dim=0))
-        plt.plot(ang_vec,torch.mean(res_mls["ILD"],dim=0))
-        plt.plot(ang_vec,torch.mean(ILD_imls,dim=0))
-        plt.grid()
-        plt.xlabel("azimuth [deg]")
-        plt.ylabel("ILD value [dB]")
-        plt.legend(["Reference","LS","MagLS","iMagLS"])
-        plt.xlim((ang_vec[0], ang_vec[-1]))
-        plt.title("ILD Value average over all central frequencies");
-        if is_save:
-            plt.savefig(figures_savepath+ "/ILD_Curves.png")
-        plt.show()
-        
-        plt.plot(ang_vec,res_ls["e_ILD"])
-        plt.plot(ang_vec,res_mls["e_ILD"])
-        plt.plot(ang_vec,e_ILD_imls)
-        plt.grid()
-        plt.xlabel("azimuth [deg]")
-        plt.ylabel("Error [dB]")
-        plt.legend(["LS","MagLS","iMagLS"])
-        plt.xlim((ang_vec[0], ang_vec[-1]))
-        plt.title("ILD error average over all central frequencies");
-        if is_save:
-            plt.savefig(figures_savepath+ "/ILD_errors_ang.png")
-        plt.show()
-    
-    
-        plt.plot(AK_f_c,torch.mean(e_ILD_non_av_ls,dim=1), '--o')
-        plt.plot(AK_f_c,torch.mean(e_ILD_non_av_mls,dim=1), '--o')
-        plt.plot(AK_f_c,torch.mean(e_ILD_non_av_imls,dim=1), '--o')
-        plt.grid()
-        plt.xlabel("f[Hz]")
-        plt.ylabel("ILD error [dB]")
-        plt.legend(["LS","MagLS","iMagLS"])
-        plt.xlim((AK_f_c[0], AK_f_c[-1]))
-        plt.title("ILD Error average over all lateral Directions");
-        if is_save:
-            plt.savefig(figures_savepath+ "/ILD_errors_freq.png")
-        plt.show()
+    else:
+        plt.close()
 
 
     if is_save:
@@ -1103,6 +1181,29 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
         save_as_sofa(Hnm_imls,Y_low_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
     
 
+    path_sofa = save_path_sofa + HRIR_name
+    fig_name = "left_ear_group_delay-iMagLS.png"
+    plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
+
+
+    # Save .wav files of results
+    
+    base_dir = os.path.join('..')
+    save_name = "iMagLS"
+    ang = np.atleast_2d(np.array([-60,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
+
+    get_sound_aluriazitions(Hnm_imls,Y_low_lebedev,omega,ang,results_save_path,dry_sig_name,base_dir,save_name,fs,shutup)
+
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-iMagLS.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath,file_name,is_save,shutup)
+
+    ang = np.atleast_2d(np.array([0,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-iMagLS.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath,file_name,is_save,shutup)
+
+    
+                
+    
     output_dict = {
         "Hnm_imls": Hnm_imls,
         "Hnm_mls": Hnm_mls,
@@ -1116,19 +1217,308 @@ def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],shutup=Tru
         "omega_az": omega_az
     }
 
-    #Hnm_imls, Hnm_mls, Hnm_high, Y_high_az, Y_low_az,Y_high_lebedev,Y_low_lebedev, fs, omega, omega_az,pos_grad_ref_fc
+    results_save_path_data = os.path.join(results_save_path, "data" )
+    filename = "/data" + ".pkl"
 
-    
+    if is_save:
+        if not os.path.isdir(results_save_path_data):
+                os.makedirs(results_save_path_data)
+        with open(results_save_path_data+filename, 'wb') as ff:
+            pickle.dump(output_dict, ff)
+            
+
+    print("\n\n=======\nDone!\n=======")
     return output_dict
 
 
+def plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup):
+    ref, sources, *_ = pf.io.read_sofa(path_sofa)
+    horizontal = np.abs(sources.elevation) < (.1 / 180 * np.pi)
+    f_vec = np.linspace(0,ref.sampling_rate/2,ref.n_bins)
+    impulse_response = torch.tensor(ref[horizontal, 0].time).permute(1,0) # take the left ear group delay
+    group_delay_result_L = itd_est.group_delay_multi_channel(impulse_response)
+
+    
+    plt.figure
+    plt.semilogx(f_vec,group_delay_result_L)
+    plt.grid(True)
+    plt.ylim(0,600)
+    if is_save:
+        plt.savefig(figures_savepath+ "/"+fig_name)
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()  
+
+
+# Function to print a loading bar
+def print_loading_bar(progress,ang):
+    bar_length = 29
+    ang_az = ang[0]
+    ang_el = ang[1]
+    filled_length = int(progress * bar_length)
+    bar = '=' * filled_length + '-' * (bar_length - filled_length)
+    print(f'\r[{bar}] ({ang_az:03d},{ang_el:03d})[az,el]', end='', flush=True)
+
+
+def gen_source_alurazation(angles,az_el_flag,Hnm,Ynm,Omega,dry_sig_path,save_path,save_name,fs,shutup):
+    bp = [20, 20e3]
+    dry_sig    = pf.io.read_audio(dry_sig_path)
+    HRIR       = f.spatial_interpolation(Hnm,Ynm,True).cpu().numpy()
+    HRIR       = np.transpose(HRIR,[0,2,1])
+    HRIR_pf    = pf.Signal(HRIR, fs)
+    HRIR_pf    = pf.dsp.filter.butterworth(HRIR_pf, 8, bp, btype='bandpass')
+
+    # Convert Omega to pf.Coordinates
+    coardinate = pf.Coordinates.from_spherical_colatitude(Omega[:,1],Omega[:,0],Omega[:,2]) # [az, el, r]
+
+    # Get the the idecies of the lateral of median plane (azimuth == 0 or 180)    
+    if az_el_flag:
+        mask = np.squeeze(np.logical_or(coardinate.azimuth == 0, coardinate.azimuth == np.pi))
+        coardinate_new_plane = coardinate[mask]
+        sort = np.argsort(coardinate_new_plane.polar)
+        coardinate_new_plane = coardinate_new_plane[sort]
+        # Convert angles to pf.Coordinates
+        angles = np.deg2rad(angles)
+        az_column = np.full((angles.shape[0], 1),0)
+        radius_column = np.full((angles.shape[0], 1), Omega[0,2])
+        # Stack the original matrix with the constant column horizontally
+        angles = np.hstack((az_column, angles))
+        angles = np.hstack((angles, radius_column))
+        to_find = pf.Coordinates.from_spherical_side(angles[:,0], angles[:,1],  angles[:,2])
+        # find the first and last indices in coardinate_new_plane acodring to angles
+        index, distance = coardinate_new_plane.find_nearest(to_find)
+        
+    else:
+        tol = np.deg2rad(0.5)
+        mask = np.squeeze(np.logical_and(coardinate.elevation <= (0+tol),coardinate.elevation >= (0-tol)))
+        coardinate_new_plane = coardinate[mask]
+        sort = np.argsort(coardinate_new_plane.azimuth)
+        coardinate_new_plane = coardinate_new_plane[sort]
+        # Convert angles to pf.Coordinates
+        angles = np.deg2rad(angles)
+        el_column = np.full((angles.shape[0], 1),np.pi/2)
+        radius_column = np.full((angles.shape[0], 1), Omega[0,2])
+        # Stack the original matrix with the constant column horizontally
+        angles = np.hstack((angles, el_column))
+        angles = np.hstack((angles, radius_column))
+        to_find = pf.Coordinates.from_spherical_colatitude(angles[:,0], angles[:,1],  angles[:,2])
+        # find the first and last indices in coardinate_new_plane acodring to angles
+        index, distance = coardinate_new_plane.find_nearest(to_find)
+    
+
+    HRIR_pf = HRIR_pf[mask,:]
+    HRIR_pf = HRIR_pf[sort]
+
+    
+    
+    if not(shutup):
+        coardinate_new_plane.show(index)
+        plt.show()
+    
+    num_of_HRIRs = index[0][1] - index[0][0] +1
+  
+
+    # using 50% overlap between two adjacent points using triangular window ###
+   
+    stride = np.ceil(dry_sig.n_samples / (num_of_HRIRs+1)).astype(int)
+    window_len_samples = 2*stride + 1
+
+    add_zeros = stride*(num_of_HRIRs+1) - dry_sig.n_samples
+    # Zero pad the dry signal so the windows will fit
+    padded = np.zeros((1,1+stride*(num_of_HRIRs+1)))
+    padded[:, :dry_sig.time.shape[1]] = dry_sig.time
+    dry_sig = pf.Signal(padded, dry_sig.sampling_rate)
+
+    # initialize output signal
+    output_signal = pf.Signal(np.zeros(dry_sig.n_samples+HRIR_pf.n_samples), dry_sig.sampling_rate)
+
+    
+    # create a triangular window
+    window = np.bartlett(window_len_samples)
+
+    # the length of the signals in term of window length
+    signal_frames_len = int(output_signal.n_samples / window_len_samples)
+
+
+    # initialize output signal
+    output_signal = pf.Signal(np.zeros(dry_sig.n_samples+HRIR_pf.n_samples), dry_sig.sampling_rate)
 
 
     
+    for frame_idx in range(num_of_HRIRs):
+        first_sample = frame_idx*stride
+        last_sample  = frame_idx*stride+window_len_samples
+        curr_corr_index = index[0][0] + frame_idx
+        curr_ang = [np.round(np.rad2deg(coardinate_new_plane.azimuth[curr_corr_index])).astype(int),np.round(np.rad2deg(coardinate_new_plane.elevation[curr_corr_index])).astype(int)]
 
+
+        
+        curr_window = np.pad(window, (first_sample, dry_sig.n_samples - last_sample), 'constant', constant_values=(0, 0))
+        if frame_idx == 0:
+            curr_window[:stride] = 1
+        elif frame_idx == num_of_HRIRs - 1:
+            curr_window[-stride:] = 1
+            
+        curr_window_pf = pf.Signal(curr_window, dry_sig.sampling_rate)
+        dry_sig_window = pf.multiply((dry_sig, curr_window_pf), domain='time')
+
+        '''
+        plt.figure()
+        pf.plot.time(curr_window_pf)
+        plt.show()
+        '''
+
+        if frame_idx == 0:
+            if not(shutup):
+                print("start angle: ",curr_ang," [deg]\n")
+            output_signal = pf.dsp.convolve(HRIR_pf[curr_corr_index],dry_sig_window)
+        else:
+            output_signal = output_signal + pf.dsp.convolve(HRIR_pf[curr_corr_index],dry_sig_window)
+        # Simulate progress
+        print_loading_bar(((frame_idx+1) / num_of_HRIRs),curr_ang)
+        #print_loading_bar((frame_idx / num_of_HRIRs),4)
+        time.sleep(0.01)  # Simulate some work being done
+
+
+    if not(shutup):
+        print("\n\nend angle: ",curr_ang,"[deg]")
+    sig_length_time = output_signal.n_samples / fs
+    movmentspeed = (num_of_HRIRs) / sig_length_time
+    movmentspeed_in_sample = (num_of_HRIRs) /  output_signal.n_samples
+
+
+
+    if not(shutup):
+        print("signal time: ", sig_length_time," seconds")
+        print("angle speed: ", movmentspeed," deg per sec")
+        print("total frame number: ", num_of_HRIRs," (including 50% overlap)")
+        print("num of sampels in each frame: ", window_len_samples," [samples]")
+        print("\n Saving to disk")
+    
+    output_signal    = pf.dsp.normalize(output_signal,channel_handling='max')
+    
+    tmp = save_path+"/"+save_name+".wav"
+    pf.io.write_audio(output_signal,tmp)
+    if not(shutup):
+        print("\n Done...\n\n")
+
+
+def get_static_source(ang,Hnm,Ynm,Omega,dry_sig_path,save_path,save_name,fs,shutup):
+    bp = [20, 20e3]
+    dry_sig    = pf.io.read_audio(dry_sig_path)
+    dry_sig    = pf.dsp.filter.butterworth(dry_sig, 8, bp, btype='bandpass')
+    HRIR       = f.spatial_interpolation(Hnm,Ynm,True).cpu().numpy()
+    HRIR       = np.transpose(HRIR,[0,2,1])
+    HRIR_pf    = pf.Signal(HRIR, fs)
+    #HRIR_pf    = pf.dsp.filter.butterworth(HRIR_pf, 8, bp, btype='bandpass')
+
+    # Convert Omega to pf.Coordinates
+    coardinate = pf.Coordinates.from_spherical_colatitude(Omega[:,1],Omega[:,0],Omega[:,2]) # [az, el, r]
+    ang = np.deg2rad(ang)
+    radius_column = np.full((ang.shape[0], 1), Omega[0,2])
+    # Stack the original matrix with the constant column horizontally
+    ang = np.hstack((ang, radius_column))
+    to_find = pf.Coordinates.from_spherical_colatitude(ang[:,0], ang[:,1],  ang[:,2])
+    # find the index in coardinate to angles
+    index, distance = coardinate.find_nearest(to_find)
+    if not(shutup):
+        coardinate.show(index)
+        plt.show()
+    output_signal = pf.dsp.convolve(HRIR_pf[index],dry_sig)
+    if not(shutup):
+        print("\n Saving to disk")
+    output_signal    = pf.dsp.normalize(output_signal,channel_handling='max')
+    tmp = save_path+"/"+save_name+".wav"
+    pf.io.write_audio(output_signal,tmp)
+    if not(shutup):
+        print("\n Done...\n\n")
+    
+    
+    
+def get_sound_aluriazitions(Hnm,Y,omega,ang,results_save_path,dry_sig_name,base_dir,save_name,fs,shutup):
+    #dry_sig_name = "casta.wav"
+    radius = 3.25
+    # Create the third column with a constant value of 3.25
+    radius = np.full((omega.shape[0],1), radius)
+    # Stack the original matrix with the constant column horizontally
+    new_omega = np.hstack((omega, radius))
+    
+    save_data_path = os.path.join(results_save_path, "Auralization")
+    save_data_path =  os.path.join(save_data_path, dry_sig_name.split(".")[0])
+    dry_sig_path = os.path.join(base_dir, "dry_signals", dry_sig_name)
+    median_flag = False # the median of lateral plane flag, if True then median of false then lateral
+    
+    if median_flag:
+        save_data_path_aura =  os.path.join(save_data_path, "Median_Plane")
+    else:
+        save_data_path_aura =  os.path.join(save_data_path, "Horizontal_Plane")
+        
+    srat_stop_angles = np.atleast_2d(np.array([0,300])).T; # if lateral then 0:360 where 90 is the left ear, if madian the use polar -90:270 where 0 is front and -90 is down, 90 is up and 180 is back
+    
+    if not os.path.isdir(save_data_path_aura):
+            os.makedirs(save_data_path_aura)
+    
+   
+    gen_source_alurazation(srat_stop_angles,median_flag,Hnm,Y,new_omega,dry_sig_path,save_data_path_aura,save_name,fs,shutup)
+    
+    
+    median_flag = True # the median of lateral plane flag, if True then median of false then lateral
+    
+    if median_flag:
+        save_data_path_aura =  os.path.join(save_data_path, "Median_Plane")
+    else:
+        save_data_path_aura =  os.path.join(save_data_path, "Lateral_Plane")
+    srat_stop_angles = np.atleast_2d(np.array([-80,180])).T; # if lateral then 0:360 where 90 is the left ear, if madian the use polar -90:270 where 0 is front and -90 is down, 90 is up and 180 is back
 
     
+    if not os.path.isdir(save_data_path_aura):
+            os.makedirs(save_data_path_aura)
+    
+    gen_source_alurazation(srat_stop_angles,median_flag,Hnm,Y,new_omega,dry_sig_path,save_data_path_aura,save_name,fs,shutup)
 
+
+
+
+    foo = "Static_" + np.array2string(ang[0])
+    save_data_path_static =  os.path.join(save_data_path, foo)
+    
+    
+    
+    if not os.path.isdir(save_data_path_static):
+            os.makedirs(save_data_path_static)
+    
+    
+  
+    get_static_source(ang,Hnm,Y,new_omega,dry_sig_path,save_data_path_static,save_name,fs,shutup)
+    
+
+def plot_time_freq_example(path_sofa,ang,fs,figures_savepath,file_name,is_save,shutup):
+    ref, sources, *_ = pf.io.read_sofa(path_sofa)
+
+    ang = np.deg2rad(ang)
+    radius = 3.25
+    radius_column = np.full((ang.shape[0], 1), radius)
+    # Stack the original matrix with the constant column horizontally
+    ang = np.hstack((ang, radius_column))
+
+    to_find = pf.Coordinates.from_spherical_colatitude(ang[:,0], ang[:,1],  ang[:,2])
+    # find the index in coardinate to angles
+    index, distance = sources.find_nearest(to_find)
+
+
+    HRIR_pf = ref[index]
+    
+
+    ax = pf.plot.time_freq(HRIR_pf)
+    #ax[0].legend()
+    if is_save:
+        plt.savefig(figures_savepath+ file_name)
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+ 
 
 
 

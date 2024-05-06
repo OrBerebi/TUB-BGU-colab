@@ -199,10 +199,11 @@ def get_ITD_group_delay(x_lr,fs,cutoff_freq,is_plot):
     group_delay_result_R = group_delay_multi_channel(x_r)
     TOA_R = torch.mean(group_delay_result_R[:cutoff_freq_idx,:], 0)
 
-    ITD = TOA_L - TOA_R
+    ITD = (TOA_L - TOA_R) # estimation in micro secs
 
     if is_plot:
         ITD_tmp = ITD.detach().cpu().numpy()
+        ITD_tmp = (ITD_tmp/fs)*1e6
         title_name = "ITD estimation - group delay"
         plot_ITD_curve(ITD_tmp,title_name)
     
