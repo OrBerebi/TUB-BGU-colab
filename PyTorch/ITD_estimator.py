@@ -210,6 +210,41 @@ def get_ITD_group_delay(x_lr,fs,cutoff_freq,is_plot):
     return ITD
 
 
+def get_muilti_ch_group_delay(x_lr,fs,cutoff_freq,is_plot):
+    # Calculate the Nyquist frequency
+    nyquist_frequency = fs / 2
+    
+    # Calculate the frequency resolution
+    frequency_resolution = fs / x_lr.shape[1]
+    
+    # Generate the positive frequency vector
+    f_vec = torch.arange(0, nyquist_frequency, frequency_resolution)
+
+    
+    cutoff_freq_idx = torch.abs(f_vec - cutoff_freq).argmin()
+
+    x_l = x_lr[:,:,0].squeeze().permute(1,0) # [time x ch]
+    x_r = x_lr[:,:,1].squeeze().permute(1,0) # [time x ch]
+
+    group_delay_result_L = group_delay_multi_channel(x_l)[:cutoff_freq_idx,:]
+    group_delay_result_R = group_delay_multi_channel(x_r)[:cutoff_freq_idx,:]
+
+
+    GD = torch.stack((group_delay_result_L,group_delay_result_R),dim=2)
+    f_vec_out = f_vec[:cutoff_freq_idx]
+
+    if is_plot:
+        GD_tmp = GD.detach().cpu().numpy()
+        title_name = "ITD estimation - group delay"
+        plt.figure
+        plt.semilogx(f_vec_out,GD_tmp[:,:,0])
+        plt.grid(True)
+        plt.ylim(0,600)
+        plt.title(title_name)
+        plt.show()
+       
+    return GD
+
 def plot_ITD_curve(ITD,title_name):
     plt.figure
     plt.plot(ITD)

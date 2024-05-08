@@ -117,8 +117,6 @@ def calc_color(p,p_hat,f_c, fs, f_lim, Nmax, n, C, nfft):
     out_R = torch.zeros((n, c))
     C = torch.abs(C) # New O.B
     
-    #C_db_tmp = 10 * torch.log10(torch.abs(C))
-    #C_db = torch.zeros_like(C_db_tmp)
     # -------------------------------------  filter signals and get ERB error
     for k in range(n):
         # find point where filter decayed for 60 dB

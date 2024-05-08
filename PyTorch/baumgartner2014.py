@@ -372,15 +372,15 @@ def baumgartner2014(sofa_path_target,sofa_path_template,sig_path,shutup,do_dtf):
     coardinate    = pf.io.read_sofa(sofa_path_target)[1]
     template      = pf.io.read_sofa(sofa_path_template)[0]
     if sig_path:
-        stim          = pf.io.read_audio(sig_path) #make sure to match the fs of the DTF and stimulus
+        stim      = pf.io.read_audio(sig_path) #make sure to match the fs of the DTF and stimulus
     else:
-        stim = []
+        stim      = []
 
 
     # zeropad inputs
     nfft_new = 2**9
     if target.n_samples < nfft_new:
-        target = zero_pad_in(target,nfft_new)
+        target   = zero_pad_in(target,nfft_new)
         template = zero_pad_in(template,nfft_new)
         
     # HRTF -> DTF
@@ -458,7 +458,7 @@ def baumgartner2014(sofa_path_target,sofa_path_template,sig_path,shutup,do_dtf):
 def hrtf2dtf(hrtf,sampling,freq_range,shutup):
     weights = pf.samplings.calculate_sph_voronoi_weights(sampling, normalize=True, center=[0, 0, 0], round_decimals=12)
     weights = weights[..., None]
-    ctf = pf.dsp.average(hrtf, caxis=0,mode='log_magnitude_zerophase', weights=weights)
+    ctf = pf.dsp.average(hrtf, caxis=0,mode='log_magnitude_zerophase', weights=weights,nan_policy='raise')
     #ctf = pf.dsp.average(hrtf, caxis=0,mode='log_magnitude_zerophase')
 
     #ctf_inverse = pf.dsp.regularized_spectrum_inversion(ctf, freq_range)

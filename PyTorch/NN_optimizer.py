@@ -277,55 +277,113 @@ def loss_function_v3(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref, AK_f_c, fs, f
 
     return output_dict
 
-def loss_function_v4(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,save_path_sofa,SourcePosition,norm_flag):
+def loss_function_v4(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref,ITD_ref,GD_ref,pos_grad_ref_fc,pos_grad_ref_f, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,lambda_vec,save_path_sofa,SourcePosition,flag_s2,norm_flag):
     # Calc the low-order HRTF in the Omega directions
     p_lebedev = f.spatial_interpolation(Hnm,Y_lebedev,False)
     
     # Calculate low order p in time (to evaluate it's ILD)
     p_az_t  = f.spatial_interpolation(Hnm,Y_az,True)
+
+    if flag_s2:
+        p_lebedev_t  = f.spatial_interpolation(Hnm,Y_lebedev,True)
+
+    #==============================================================================
+    # Calc the NMSE error for each set of Hnm
+    #==============================================================================
+    if lambda_vec[1] == 0:
+        e_nmse = torch.zeros(Hnm.shape[1], requires_grad=True)
+    else:
+        e_nmse = f.clc_e_nmse(p_ref,p_lebedev,norm_flag)
+
+    #==============================================================================
+    # Calc the Magnitude error for each set of Hnm
+    #==============================================================================
+    if lambda_vec[7] == 0:
+        e_mag_freq_weighted = torch.zeros(Hnm.shape[1], requires_grad=True)
+    else:
+        e_mag_freq_weighted = f.clc_e_mag_v2(p_ref,p_lebedev,pos_grad_ref_f,norm_flag) # [space x freq x ears]
     
-    # Calc the NMSE and Magnitude error for each set of Hnm
-    e_nmse               = f.clc_e_nmse(p_ref,p_lebedev,norm_flag)
-    e_mag_freq_weighted  = f.clc_e_mag_v2(p_ref,p_lebedev,pos_grad_ref_f,norm_flag) # [space x freq x ears]
-    e_mag_freq           = f.clc_e_mag_v2(p_ref,p_lebedev,torch.tensor([]),norm_flag) # [space x freq x ears]
+    if lambda_vec[2] == 0:
+        e_mag_freq = torch.zeros(Hnm.shape[1], requires_grad=True)
+    else:
+        e_mag_freq  = f.clc_e_mag_v2(p_ref,p_lebedev,torch.tensor([]),norm_flag) # [space x freq x ears]
 
 
- 
+    #==============================================================================
     # Calculate the ILD error for each low-order representation
-    ILD      = ak.clc_ILD(p_az_t, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    #==============================================================================
+    if flag_s2:
+        if lambda_vec[0] == 0:
+            ILD = torch.zeros(AK_f_c.shape[0], p_lebedev_t.shape[0] , requires_grad=True)
+        else:
+            ILD      = ak.clc_ILD(p_lebedev_t, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    else:
+        if lambda_vec[0] == 0:
+            ILD = torch.zeros(AK_f_c.shape[0], p_az_t.shape[0] , requires_grad=True)
+        else:
+            ILD      = ak.clc_ILD(p_az_t, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    
     e_ILD    = torch.mean(torch.abs(ILD_ref - ILD),dim=0) #avarage over frequencies bands
 
+    #==============================================================================
     # Calculate the ITD error for low-order representation
-    #ITD = itd_est.get_ITD_onset_threshold(p_az_t.float(),fs,-20, 3e3,False) #returns the micro sec ITD usinng the onset method
-    #ITD = itd_est.get_ITD_CC(p_az_t.float(),fs, 3e3,False) #returns the micro sec ITD usinng the onset method
-    ITD = itd_est.get_ITD_group_delay(p_az_t.float(),fs, 1.5e3,False) #returns the micro sec ITD usinng the onset method
+    #==============================================================================
+    if lambda_vec[5] == 0:
+        ITD = torch.zeros(p_az_t.shape[0] , requires_grad=True)
+        GD  = torch.zeros(GD_ref.shape , requires_grad=True)
+    else:
+        ITD   = itd_est.get_ITD_group_delay(p_az_t.float(),fs, 3e3,False) #returns the micro sec ITD usinng the onset method
+        GD   = itd_est.get_muilti_ch_group_delay(p_az_t.float(),fs, 3e3,False) # returns the group delay in [freq x space x ears]
+        
+    e_GD = torch.mean(torch.abs(GD_ref - GD),dim= 1 ).squeeze() # avarage over directions
+    e_GD = torch.mean(e_GD,dim= 1).squeeze() # avarage over ears
+    e_ITD = torch.norm(e_GD,dim= 0) # norm over freqncies
 
+    #e_ITD = torch.mean(torch.abs(ITD_ref - ITD)) # avarage over freqncies
     
-    e_ITD = torch.mean(torch.abs(ITD_ref - ITD)) # avarage over directions
-
-
+    #print("group delay error value: ", e_GD)
+    #print("ITD error value: ", e_ITD)
+    
+    #==============================================================================
     # Calculate colorization error
-    e_color_fc_lr_space                   = ak.calc_color(p_ref,p_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    #==============================================================================
+    if lambda_vec[4] == 0:
+        e_color_fc_lr_space = torch.zeros(AK_f_c.shape[0], p_lebedev.shape[0] ,p_lebedev.shape[2]  , requires_grad=True)
+    else:
+        e_color_fc_lr_space = ak.calc_color(p_ref,p_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
 
-    pos_grad_ref_fc_linear = 10 ** (pos_grad_ref_fc / 10) # the mask is given in dB turn to linear for multiplication
-   
-    e_color_fc_lr_space_pos_grad_weighted =  e_color_fc_lr_space * pos_grad_ref_fc_linear # mask the "important" directions and frequencies
-    e_color_fc_lr_space_pos_grad_weighted = torch.abs( 1 - 10*torch.log10(torch.abs(e_color_fc_lr_space_pos_grad_weighted))) # zero is good
+    if lambda_vec[6] == 0:
+        e_color_fc_lr_space_pos_grad_weighted = torch.zeros(AK_f_c.shape[0], p_lebedev.shape[0] ,p_lebedev.shape[2]  , requires_grad=True)
+    else:
+        e_color_fc_lr_space_pos_grad_weighted = ak.calc_color(p_ref,p_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+        pos_grad_ref_fc_linear = 10 ** (pos_grad_ref_fc / 20) # the mask is given in dB turn to linear for multiplication
+        e_color_fc_lr_space_pos_grad_weighted = e_color_fc_lr_space_pos_grad_weighted * pos_grad_ref_fc_linear # mask the "important" directions and frequencies
+        e_color_fc_lr_space_pos_grad_weighted = (10*torch.log10(torch.abs(e_color_fc_lr_space_pos_grad_weighted)))**2 # zero is good
+
+
     
-    e_color_fc_lr_space = torch.abs(1- torch.abs(10*torch.log10(e_color_fc_lr_space))) # zero is good
+    e_color_fc_lr_space_out = e_color_fc_lr_space
+
+    e_color_fc_lr_space = (10*torch.log10(e_color_fc_lr_space))**2 # zero is good
     
     e_color_fc_lr_weighted  = torch.mean(e_color_fc_lr_space_pos_grad_weighted,dim=1).squeeze() # E[.] over space
-    e_color_fc_weighted     = torch.mean(e_color_fc_lr_weighted,dim=1).squeeze()                      # E[.] over ears
-    e_color_weighted        = torch.mean(e_color_fc_weighted,dim=0).squeeze()          # E[.] over freqncies
+    e_color_fc_weighted     = torch.mean(e_color_fc_lr_weighted,dim=1).squeeze()                # E[.] over ears
+    e_color_weighted        = torch.mean(e_color_fc_weighted,dim=0).squeeze()                   # E[.] over freqncies
     
     e_color_fc_lr  = torch.mean(e_color_fc_lr_space,dim=1).squeeze() # E[.] over space
-    e_color_fc     = torch.mean(e_color_fc_lr,dim=1).squeeze()    # E[.] over ears
+    e_color_fc     = torch.mean(e_color_fc_lr,dim=1).squeeze()       # E[.] over ears
     e_color        = torch.mean(e_color_fc,dim=0).squeeze()          # E[.] over freqncies
     
     
-
-    # Calculate the Enargy error for each low-order representation
-    e_mag_diff = clc_e_mag_diff(p_lebedev)
+    #==============================================================================
+    # Calculate the derivitive magnitude, to smooth results
+    #==============================================================================
+    if lambda_vec[3] == 0:
+        e_mag_diff = torch.zeros( Hnm.shape[1] - 1  , requires_grad=True)
+    else:
+        e_mag_diff = clc_e_mag_diff(p_lebedev)
+    
+    
     
     # Get error band indexs
     f_vec   = np.arange(0,e_nmse.shape[0])*((fs/2)/(e_nmse.shape[0]-1))
@@ -359,12 +417,6 @@ def loss_function_v4(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref,ITD_ref,pos_gr
     local_pe, local_qe, circ_mean, circ_var, circ_std = bam.circular_stats_from_pdf(out['pdf'], out['rang'], out['tang'],shutup)
     local_qe = np.mean(local_qe)
     local_pe = np.mean(local_pe)
-
-
-    #e_ITD.requires_grad = True
-    #print(e_ITD.requires_grad)
-    #print(e_ITD)
-    #print(e_ILD)
     
 
     # Define the individual terms
@@ -390,6 +442,7 @@ def loss_function_v4(Hnm,Y_lebedev,Y_az,p_ref,p_ref_az_t ,ILD_ref,ITD_ref,pos_gr
         "ILD": ILD,
         "e_mag_diff": e_mag_diff,
         "e_color": e_color,
+        "e_color_fc_lr_space": e_color_fc_lr_space_out,
         "e_ITD": e_ITD,
         "qe": local_qe,
         "pe": local_pe,
@@ -787,448 +840,7 @@ def import_matlab_data(data_path,device,shutup):
 
     return omega, omega_az, fs, f_band, N_low, N_high, f_vec, ang_vec, nfft, Hnm_high, Hnm_low, Hnm_mls, Y_high_lebedev, Y_high_az, Y_low_lebedev, Y_low_az, p_f_high_lebedev, ILD_ref, p_high_az_t, AK_Nmax, AK_f_c, AK_n, AK_C, p_ref_az_t
     
-def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],dry_sig_name="casta.wav",shutup=True,is_save=False):
 
-    figures_savepath = os.path.join( results_save_path,"training_figures")
-
-    # Setup device
-    has_gpu = torch.cuda.is_available()
-    has_mps = torch.backends.mps.is_built()
-    device = "mps" if torch.backends.mps.is_built() \
-        else "gpu" if torch.cuda.is_available() else "cpu"
-    if not(shutup):
-        print(f"Python Platform: {platform.platform()}")
-        print(f"PyTorch Version: {torch.__version__}")
-        print()
-        print(f"Python {sys.version}")
-        print("NVIDIA/CUDA GPU is", "available" if has_gpu else "NOT AVAILABLE")
-        print("MPS (Apple Metal) is", "AVAILABLE" if has_mps else "NOT AVAILABLE")
-    device = "cpu"
-    if not(shutup):
-        print(f"Target device is {device}")
-
-    if is_save:
-        if not os.path.isdir(figures_savepath):
-            os.makedirs(figures_savepath)
-
-    omega, omega_az, fs, f_band, N_low, N_high, f_vec, ang_vec, nfft, Hnm_high, Hnm_low, Hnm_mls, Y_high_lebedev, Y_high_az, Y_low_lebedev, Y_low_az, p_f_high_lebedev, ILD_ref, p_high_az_t, AK_Nmax, AK_f_c, AK_n, AK_C, p_ref_az_t = import_matlab_data(data_path,device,shutup)
-
-
-    # Source position for the sofa export
-    SourcePosition  = np.rad2deg(omega)
-    source_distance = 3.25
-    source_distance_column = np.full((SourcePosition.shape[0], 1), source_distance)
-    SourcePosition = np.concatenate((SourcePosition, source_distance_column), axis=1)
-    SourcePosition[:,0] = -1*(SourcePosition[:,0] - 90)  # change from [0,180) to [-90,90) with +30 left and -30 right 0 is facing forword
-    SourcePosition[:, [0, 1]] = SourcePosition[:, [1, 0]]
-
-    save_path_sofa = os.path.join(results_save_path, "sofa_export")
-    if not os.path.isdir(save_path_sofa):
-            os.makedirs(save_path_sofa)
-
-    # Save the reference sofa and the MagLS sofa for the baumgartner2014 model
-    if is_save:
-        HRIR_name = "/ref.sofa"
-        save_as_sofa(Hnm_high,Y_high_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
-        
-        path_sofa = save_path_sofa + HRIR_name
-        fig_name = "left_ear_group_delay-reference.png"
-        plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
-        
-        HRIR_name = "/MagLS.sofa"
-        save_as_sofa(Hnm_mls,Y_low_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
-        path_sofa = save_path_sofa + HRIR_name
-        fig_name = "left_ear_group_delay-MagLS.png"
-        plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
-    
-    
-
-    model    = NN_v2_simp(Hnm_low.shape[0],Hnm_low.shape[1])
-    model.to(device)
-    
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.00003, momentum=0.9)
-    optimizer.zero_grad()
-
-    x = Hnm_mls  # initial solution is Ambisonics MagLS
-    #x = Hnm_low # initial solution is Ambisonics LS
-    x.to(device)
-
-    if not(shutup):  
-        print("\n\n-----------NN summary---------")
-        result = summary(model,input_size= x.shape,dtypes=[torch.complex128],verbose=2,col_width=13,
-            col_names=["kernel_size","input_size", "output_size", "num_params", "mult_adds"], row_settings=["var_names"],)
-
-    h_nmse = []
-    h_mag = []
-    h_ILD = []
-    h_total = []
-    h_diff = []
-    h_color = []
-    h_ITD = []
-    h_qe = []
-    h_pe = []
-    h_color_weighted = []
-    h_mag_weighted = []
-
-
-    
-
-    x_lr = f.spatial_interpolation(Hnm_high,Y_high_az,True).float()
-    #cutoff_freq = 3e3
-    cutoff_freq = 1.5e3
-    trashhold   = -20
-    
-    #ITD_ref = itd_est.get_ITD_onset_threshold(x_lr,fs,trashhold,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
-    ITD_ref = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the group delay method
-
-    
-    pos_grad_ref_fc = calc_positive_grad(Hnm_high,Y_high_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,True)
-
-    pos_grad_ref_f  = calc_positive_grad_pyfar(Hnm_high,Y_high_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,True)
-
-
-    
-
-    #pos_grad_ref_bins = calc_positive_grad_bins(Hnm_high,Y_high_az,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,False)
-
-    #pos_grad_ref_bins = calc_positive_grad_interpulate(Hnm_high,Y_high_az,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,False)
-    
-
-    for epoch in tqdm (range (epochs), desc="Loading..."):
-
-        # zero the parameter gradients
-        optimizer.zero_grad()
-
-        # forward + backward + optimize
-        output = model(x)
-        output_dict   = loss_function_v4(output,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                         ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                         lambda_vec,save_path_sofa,SourcePosition,norm_flag=False)
-
-        output_dict["e_total"].backward(retain_graph=True)
-        optimizer.step()
-
-
-        # print(output_dict["e_ILD"].shape)
-        # print(output_dict["ILD"].shape)
-        
-        h_color_weighted     = np.append(h_color_weighted,output_dict["e_color_weighted"].detach().cpu().numpy()*lambda_vec[6])
-        h_mag_weighted       = np.append(h_mag_weighted,torch.norm(output_dict["e_mag_weighted"],dim=0).detach().cpu().numpy()*lambda_vec[7])
-        
-        h_qe       = np.append(h_qe,output_dict["qe"])
-        h_pe       = np.append(h_pe,output_dict["pe"])
-        
-        h_ITD       = np.append(h_ITD,output_dict["e_ITD"].detach().cpu().numpy()*lambda_vec[5])
-        h_color     = np.append(h_color,output_dict["e_color"].detach().cpu().numpy()*lambda_vec[4])
-        h_diff      = np.append(h_diff,output_dict["e_mag_diff"].detach().cpu().numpy()*lambda_vec[3])
-        
-        h_ILD       = np.append(h_ILD,torch.norm(output_dict["e_ILD"],dim=0).detach().cpu().numpy()*lambda_vec[0])
-        
-        h_nmse      = np.append(h_nmse,torch.norm(output_dict["e_nmse"],dim=0).detach().cpu().numpy()*lambda_vec[1])
-        h_mag       = np.append(h_mag,torch.norm(output_dict["e_mag"],dim=0).detach().cpu().numpy()*lambda_vec[2])
-        h_total     = np.append(h_total,torch.norm(output_dict["e_total"],dim=0).detach().cpu().numpy())
-        
-
-    
-        #print(h_color)
-        #print(h_diff)
-        #print(h_ILD)
-        #print(h_nmse)
-        #print(h_mag)
-        
-
-    if not(shutup):    
-        print('Finished Training')
-
-    
-    """
-    max_value = np.max(h_nmse, axis=0)
-    normalized_h_nmse = h_nmse / max_value
-    
-    max_value = np.max(h_mag, axis=0)
-    normalized_h_mag = h_mag / max_value
-    
-    max_value = np.max(h_ILD, axis=0)
-    normalized_h_ILD = h_ILD / max_value
-    
-    max_value = np.max(h_diff, axis=0)
-    normalized_h_diff = h_diff / max_value
-
-    max_value = np.max(h_color, axis=0)
-    normalized_h_color = h_color / max_value
-    
-    max_value = np.max(h_ITD, axis=0)
-    normalized_h_ITD = h_ITD / max_value
-
-    max_value = np.max(h_color_weighted, axis=0)
-    normalized_h_color_weighted = h_color_weighted / max_value
-    
-    max_value = np.max(h_mag_weighted, axis=0)
-    normalized_h_mag_weighted = h_mag_weighted / max_value
-    """
-    normalized_h_nmse  = h_nmse
-    normalized_h_mag   = h_mag
-    normalized_h_ILD   = h_ILD
-    normalized_h_diff  = h_diff
-    normalized_h_color = h_color
-    normalized_h_ITD   = h_ITD
-    normalized_h_color_weighted = h_color_weighted
-    normalized_h_mag_weighted = h_mag_weighted
-    
-    plt.plot(normalized_h_nmse)
-    plt.plot(normalized_h_mag)
-    plt.plot(normalized_h_ILD)
-    plt.plot(normalized_h_diff)
-    plt.plot(normalized_h_color)
-    plt.plot(normalized_h_ITD)
-    plt.plot(normalized_h_color_weighted)
-    plt.plot(normalized_h_mag_weighted)
-    plt.grid()
-    plt.xlabel("iterations")
-    plt.ylabel("error")
-    plt.title("Training Curves")
-    plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff","e_color","e_ITD","e_color_weighted","e_mag_weighted"]);
-    
-    if is_save:
-        plt.savefig(figures_savepath+ "/Training_Curves.png")
-    
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close() 
-    
-    
-
-    # Save the initial and final values 
-    # Define the arrays
-    h1 = [h_nmse[0], h_nmse[-1]]
-    h2 = [h_mag[0], h_mag[-1]]
-    h3 = [h_ILD[0], h_ILD[-1]]
-    h4 = [h_diff[0], h_diff[-1]]
-    h5 = [h_color[0], h_color[-1]]
-    h6 = [h_ITD[0], h_ITD[-1]]
-    h7 = [h_color_weighted[0], h_color_weighted[-1]]
-    h8 = [h_mag_weighted[0], h_mag_weighted[-1]]
-    
-    # Define the file path
-    file_path = figures_savepath + "/error_values.txt"
-    
-    # Define array names and values
-    arrays = [("nmse error [dB]", h1), ("magnitude error [dB]", h2), ("ILD error [dB]", h3),("diff error", h4),("color error", h5),("ITD error [samples]", h6),("color weighted error ", h7),("magnitude weighted error [dB]", h8)]
-    
-    # Write the arrays to the file
-    with open(file_path, "w") as file:
-        for name, values in arrays:
-            file.write(f"{name}:\n")
-            file.write(f"{values[0]}, {values[1]}\n\n")
-    
-
-
-
-        
-    plt.plot(h_qe)
-    plt.plot(h_pe)
-    plt.grid()
-    plt.xlabel("iterations")
-    plt.ylabel("error")
-    plt.title("Training Curves")
-    plt.legend(["Quadrant errors (%)","Local polar RMS error (deg)"]);
-    if is_save:
-        plt.savefig(figures_savepath+ "/qe_pe_curves.png")
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close()
-
-    Hnm_imls = output.detach()
-
-    x_lr = f.spatial_interpolation(Hnm_imls,Y_low_az,True).float()
-    #ITD_imls = itd_est.get_ITD_onset_threshold(x_lr,fs,trashhold,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
-    ITD_imls = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
-    x_lr = f.spatial_interpolation(Hnm_mls,Y_low_az,True).float()
-    #ITD_mls = itd_est.get_ITD_onset_threshold(x_lr,fs,trashhold,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
-    ITD_mls = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
-
-
-    ITD_ref_tmp = ITD_ref.detach().numpy()
-    ITD_ref_tmp = (ITD_ref_tmp/fs)*1e6
-    ITD_imls = ITD_imls.detach().numpy()
-    ITD_imls = (ITD_imls/fs)*1e6
-    ITD_mls = ITD_mls.detach().numpy()
-    ITD_mls = (ITD_mls/fs)*1e6
-    
-    plt.figure
-    plt.plot(ITD_ref_tmp, label='Reference')
-    plt.plot(ITD_imls, label='iMagLS')
-    plt.plot(ITD_mls, label='MagLS')
-    plt.xlabel('Incident angle')
-    plt.ylabel('Value [micro sec]')
-    plt.title('ITD')
-    plt.grid(True)
-    plt.legend()
-    if is_save:
-        plt.savefig(figures_savepath+ "/ITD_curves.png")
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close()
-        
-    # Reassign the original low frequency coefficients
-    idx_min = (np.abs(f_vec - 2e3)).argmin()
-    #Hnm_imls[:,0:idx_min,:] = Hnm_mls[:,0:idx_min,:]
-
-    
-    # Calc some plots
-    
-    res_imls   = loss_function_v4(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                     ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                     lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
-    
-    res_ls   = loss_function_v4(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                     ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                     lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
-    
-    res_mls   = loss_function_v4(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
-                                     ILD_ref,ITD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
-                                     lambda_vec,save_path_sofa,SourcePosition,norm_flag=True)
-    
-
-    e_ILD_imls  = res_imls["e_ILD"].detach().cpu().numpy()
-    e_nmse_imls = res_imls["e_nmse"].detach().cpu().numpy()
-    e_mag_imls  = res_imls["e_mag"].detach().cpu().numpy()
-    ILD_imls    = res_imls["ILD"].detach()
-
-    e_ILD_non_av_ls = torch.abs(ILD_ref - res_ls["ILD"])
-    e_ILD_non_av_mls = torch.abs(ILD_ref - res_mls["ILD"])
-    e_ILD_non_av_imls = torch.abs(ILD_ref - res_imls["ILD"])
-
-
-    plt.plot(f_vec,res_ls["e_nmse"])
-    plt.plot(f_vec,res_mls["e_nmse"])
-    plt.plot(f_vec,res_imls["e_nmse"])
-    plt.plot(f_vec,res_ls["e_mag"])
-    plt.plot(f_vec,res_mls["e_mag"])
-    plt.plot(f_vec,res_imls["e_mag"])
-    plt.xlim([99,20e3])
-    plt.xscale('log')
-    plt.xlabel("f[Hz]")
-    plt.grid(which='both')
-    plt.title("Avaraged per ear NMSE and Magnitude Errors")
-    plt.legend(["LS NMSE","MagLS NMSE","iMagLS NMSE","LS magnitude","MagLS magnitude","iMagLS magnitude"])
-    plt.ylabel("error[dB]");
-    if is_save:
-        plt.savefig(figures_savepath+ "/freq_errors.png")
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close()
-    
-    
-
-    plt.plot(ang_vec,torch.mean(ILD_ref,dim=0))
-    plt.plot(ang_vec,torch.mean(res_ls["ILD"],dim=0))
-    plt.plot(ang_vec,torch.mean(res_mls["ILD"],dim=0))
-    plt.plot(ang_vec,torch.mean(ILD_imls,dim=0))
-    plt.grid()
-    plt.xlabel("azimuth [deg]")
-    plt.ylabel("ILD value [dB]")
-    plt.legend(["Reference","LS","MagLS","iMagLS"])
-    plt.xlim((ang_vec[0], ang_vec[-1]))
-    plt.title("ILD Value average over all central frequencies");
-    if is_save:
-        plt.savefig(figures_savepath+ "/ILD_Curves.png")
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close()
-    
-    plt.plot(ang_vec,res_ls["e_ILD"])
-    plt.plot(ang_vec,res_mls["e_ILD"])
-    plt.plot(ang_vec,e_ILD_imls)
-    plt.grid()
-    plt.xlabel("azimuth [deg]")
-    plt.ylabel("Error [dB]")
-    plt.legend(["LS","MagLS","iMagLS"])
-    plt.xlim((ang_vec[0], ang_vec[-1]))
-    plt.title("ILD error average over all central frequencies");
-    if is_save:
-        plt.savefig(figures_savepath+ "/ILD_errors_ang.png")
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close()
-
-
-    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_ls,dim=1), '--o')
-    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_mls,dim=1), '--o')
-    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_imls,dim=1), '--o')
-    plt.grid()
-    plt.xlabel("f[Hz]")
-    plt.ylabel("ILD error [dB]")
-    plt.legend(["LS","MagLS","iMagLS"])
-    plt.xlim((AK_f_c[0], AK_f_c[-1]))
-    plt.title("ILD Error average over all lateral Directions");
-    if is_save:
-        plt.savefig(figures_savepath+ "/ILD_errors_freq.png")
-    if not(shutup):
-        plt.show()
-    else:
-        plt.close()
-
-
-    if is_save:
-        HRIR_name = "/iMagLS.sofa"
-        save_as_sofa(Hnm_imls,Y_low_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
-    
-
-    path_sofa = save_path_sofa + HRIR_name
-    fig_name = "left_ear_group_delay-iMagLS.png"
-    plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
-
-
-    # Save .wav files of results
-    
-    base_dir = os.path.join('..')
-    save_name = "iMagLS"
-    ang = np.atleast_2d(np.array([-60,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
-
-    get_sound_aluriazitions(Hnm_imls,Y_low_lebedev,omega,ang,results_save_path,dry_sig_name,base_dir,save_name,fs,shutup)
-
-    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-iMagLS.png"
-    plot_time_freq_example(path_sofa,ang,fs,figures_savepath,file_name,is_save,shutup)
-
-    ang = np.atleast_2d(np.array([0,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
-    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-iMagLS.png"
-    plot_time_freq_example(path_sofa,ang,fs,figures_savepath,file_name,is_save,shutup)
-
-    
-                
-    
-    output_dict = {
-        "Hnm_imls": Hnm_imls,
-        "Hnm_mls": Hnm_mls,
-        "Hnm_high": Hnm_high,
-        "Y_high_az": Y_high_az,
-        "Y_low_az": Y_low_az,
-        "Y_high_lebedev": Y_high_lebedev,
-        "Y_low_lebedev": Y_low_lebedev,
-        "fs": fs,
-        "omega": omega,
-        "omega_az": omega_az
-    }
-
-    results_save_path_data = os.path.join(results_save_path, "data" )
-    filename = "/data" + ".pkl"
-
-    if is_save:
-        if not os.path.isdir(results_save_path_data):
-                os.makedirs(results_save_path_data)
-        with open(results_save_path_data+filename, 'wb') as ff:
-            pickle.dump(output_dict, ff)
-            
-
-    print("\n\n=======\nDone!\n=======")
-    return output_dict
 
 
 def plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup):
@@ -1524,3 +1136,501 @@ def plot_time_freq_example(path_sofa,ang,fs,figures_savepath,file_name,is_save,s
 
     
 
+def start(data_path,results_save_path,epochs=300,lambda_vec=[1,1,1,1],dry_sig_name="casta.wav",flag_s2=False,shutup=True,is_save=False):
+
+    figures_savepath = os.path.join( results_save_path,"training_figures")
+
+    # Setup device
+    has_gpu = torch.cuda.is_available()
+    has_mps = torch.backends.mps.is_built()
+    device = "mps" if torch.backends.mps.is_built() \
+        else "gpu" if torch.cuda.is_available() else "cpu"
+    if not(shutup):
+        print(f"Python Platform: {platform.platform()}")
+        print(f"PyTorch Version: {torch.__version__}")
+        print()
+        print(f"Python {sys.version}")
+        print("NVIDIA/CUDA GPU is", "available" if has_gpu else "NOT AVAILABLE")
+        print("MPS (Apple Metal) is", "AVAILABLE" if has_mps else "NOT AVAILABLE")
+    device = "cpu"
+    if not(shutup):
+        print(f"Target device is {device}")
+
+    if is_save:
+        if not os.path.isdir(figures_savepath):
+            os.makedirs(figures_savepath)
+
+    omega, omega_az, fs, f_band, N_low, N_high, f_vec, ang_vec, nfft, Hnm_high, Hnm_low, Hnm_mls, Y_high_lebedev, Y_high_az, Y_low_lebedev, Y_low_az, p_f_high_lebedev, ILD_ref, p_high_az_t, AK_Nmax, AK_f_c, AK_n, AK_C, p_ref_az_t = import_matlab_data(data_path,device,shutup)
+
+
+    # Source position for the sofa export
+    SourcePosition  = np.rad2deg(omega)
+    source_distance = 3.25
+    source_distance_column = np.full((SourcePosition.shape[0], 1), source_distance)
+    SourcePosition = np.concatenate((SourcePosition, source_distance_column), axis=1)
+    SourcePosition[:,0] = -1*(SourcePosition[:,0] - 90)  # change from [0,180) to [-90,90) with +30 left and -30 right 0 is facing forword
+    SourcePosition[:, [0, 1]] = SourcePosition[:, [1, 0]]
+
+    save_path_sofa = os.path.join(results_save_path, "sofa_export")
+    if not os.path.isdir(save_path_sofa):
+            os.makedirs(save_path_sofa)
+
+    # Save the reference sofa and the MagLS sofa for the baumgartner2014 model
+    if is_save:
+        HRIR_name = "/ref.sofa"
+        save_as_sofa(Hnm_high,Y_high_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
+        
+        path_sofa = save_path_sofa + HRIR_name
+        fig_name = "left_ear_group_delay-reference.png"
+        plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
+        
+        HRIR_name = "/MagLS.sofa"
+        save_as_sofa(Hnm_mls,Y_low_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
+        path_sofa = save_path_sofa + HRIR_name
+        fig_name = "left_ear_group_delay-MagLS.png"
+        plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
+    
+    
+
+    model    = NN_v2_simp(Hnm_low.shape[0],Hnm_low.shape[1])
+    model.to(device)
+    
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.00003, momentum=0.9)
+    optimizer.zero_grad()
+
+    x = Hnm_mls  # initial solution is Ambisonics MagLS
+    #x = Hnm_low # initial solution is Ambisonics LS
+    x.to(device)
+
+    if not(shutup):  
+        print("\n\n-----------NN summary---------")
+        result = summary(model,input_size= x.shape,dtypes=[torch.complex128],verbose=2,col_width=13,
+            col_names=["kernel_size","input_size", "output_size", "num_params", "mult_adds"], row_settings=["var_names"],)
+
+    h_nmse = []
+    h_mag = []
+    h_ILD = []
+    h_total = []
+    h_diff = []
+    h_color = []
+    h_ITD = []
+    h_qe = []
+    h_pe = []
+    h_color_weighted = []
+    h_mag_weighted = []
+
+
+    
+
+    cutoff_freq = 3e3
+    #cutoff_freq = 1.5e3
+    trashhold   = -20
+    x_lr = f.spatial_interpolation(Hnm_high,Y_high_az,True).float()
+    ITD_ref = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the group delay method
+    GD_ref   = itd_est.get_muilti_ch_group_delay(x_lr,fs, cutoff_freq,False) # returns the group delay in [freq x space x ears]
+
+
+    
+    if flag_s2:
+        HRIR_ref = f.spatial_interpolation(Hnm_high,Y_high_lebedev,True)
+        ILD_ref_opt = ak.clc_ILD(HRIR_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    else:
+        HRIR_ref = f.spatial_interpolation(Hnm_high,Y_high_az,True)
+        ILD_ref_opt = ak.clc_ILD(HRIR_ref, AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft)
+    
+    pos_grad_ref_fc = calc_positive_grad(Hnm_high,Y_high_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,True)
+
+    pos_grad_ref_f  = calc_positive_grad_pyfar(Hnm_high,Y_high_lebedev,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,True)
+
+
+    
+
+    #pos_grad_ref_bins = calc_positive_grad_bins(Hnm_high,Y_high_az,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,False)
+
+    #pos_grad_ref_bins = calc_positive_grad_interpulate(Hnm_high,Y_high_az,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C, nfft,False)
+    
+
+    for epoch in tqdm (range (epochs), desc="Loading..."):
+
+        # zero the parameter gradients
+        optimizer.zero_grad()
+
+        # forward + backward + optimize
+        output = model(x)
+        output_dict   = loss_function_v4(output,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                         ILD_ref_opt,ITD_ref,GD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                         lambda_vec,save_path_sofa,SourcePosition,flag_s2,norm_flag=False)
+
+        output_dict["e_total"].backward(retain_graph=True)
+        optimizer.step()
+        
+        
+        h_color_weighted     = np.append(h_color_weighted,output_dict["e_color_weighted"].detach().cpu().numpy()*lambda_vec[6])
+        h_mag_weighted       = np.append(h_mag_weighted,torch.norm(output_dict["e_mag_weighted"],dim=0).detach().cpu().numpy()*lambda_vec[7])
+        
+        h_qe       = np.append(h_qe,output_dict["qe"])
+        h_pe       = np.append(h_pe,output_dict["pe"])
+        
+        h_ITD       = np.append(h_ITD,output_dict["e_ITD"].detach().cpu().numpy()*lambda_vec[5])
+        h_color     = np.append(h_color,output_dict["e_color"].detach().cpu().numpy()*lambda_vec[4])
+        h_diff      = np.append(h_diff,output_dict["e_mag_diff"].detach().cpu().numpy()*lambda_vec[3])
+        
+        h_ILD       = np.append(h_ILD,torch.norm(output_dict["e_ILD"],dim=0).detach().cpu().numpy()*lambda_vec[0])
+        
+        h_nmse      = np.append(h_nmse,torch.norm(output_dict["e_nmse"],dim=0).detach().cpu().numpy()*lambda_vec[1])
+        h_mag       = np.append(h_mag,torch.norm(output_dict["e_mag"],dim=0).detach().cpu().numpy()*lambda_vec[2])
+        h_total     = np.append(h_total,torch.norm(output_dict["e_total"],dim=0).detach().cpu().numpy())
+        
+
+    
+        #print(h_color)
+        #print(h_diff)
+        #print(h_ILD)
+        #print(h_nmse)
+        #print(h_mag)
+        
+
+    if not(shutup):    
+        print('Finished Training')
+
+    
+    """
+    max_value = np.max(h_nmse, axis=0)
+    normalized_h_nmse = h_nmse / max_value
+    
+    max_value = np.max(h_mag, axis=0)
+    normalized_h_mag = h_mag / max_value
+    
+    max_value = np.max(h_ILD, axis=0)
+    normalized_h_ILD = h_ILD / max_value
+    
+    max_value = np.max(h_diff, axis=0)
+    normalized_h_diff = h_diff / max_value
+
+    max_value = np.max(h_color, axis=0)
+    normalized_h_color = h_color / max_value
+    
+    max_value = np.max(h_ITD, axis=0)
+    normalized_h_ITD = h_ITD / max_value
+
+    max_value = np.max(h_color_weighted, axis=0)
+    normalized_h_color_weighted = h_color_weighted / max_value
+    
+    max_value = np.max(h_mag_weighted, axis=0)
+    normalized_h_mag_weighted = h_mag_weighted / max_value
+    """
+    normalized_h_nmse  = h_nmse
+    normalized_h_mag   = h_mag
+    normalized_h_ILD   = h_ILD
+    normalized_h_diff  = h_diff
+    normalized_h_color = h_color
+    normalized_h_ITD   = h_ITD
+    normalized_h_color_weighted = h_color_weighted
+    normalized_h_mag_weighted = h_mag_weighted
+    
+    plt.plot(normalized_h_nmse)
+    plt.plot(normalized_h_mag)
+    plt.plot(normalized_h_ILD)
+    plt.plot(normalized_h_diff)
+    plt.plot(normalized_h_color)
+    plt.plot(normalized_h_ITD)
+    plt.plot(normalized_h_color_weighted)
+    plt.plot(normalized_h_mag_weighted)
+    plt.grid()
+    plt.xlabel("iterations")
+    plt.ylabel("error")
+    plt.title("Training Curves")
+    plt.legend(["e NMSE","e Magnitude","e ILD","e_mag_diff","e_color","e_ITD","e_color_weighted","e_mag_weighted"]);
+    
+    if is_save:
+        plt.savefig(figures_savepath+ "/Training_Curves.png")
+    
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close() 
+    
+    
+
+    # Save the initial and final values 
+    # Define the arrays
+    h1 = [h_nmse[0], h_nmse[-1]]
+    h2 = [h_mag[0], h_mag[-1]]
+    h3 = [h_ILD[0], h_ILD[-1]]
+    h4 = [h_diff[0], h_diff[-1]]
+    h5 = [h_color[0], h_color[-1]]
+    h6 = [h_ITD[0], h_ITD[-1]]
+    h7 = [h_color_weighted[0], h_color_weighted[-1]]
+    h8 = [h_mag_weighted[0], h_mag_weighted[-1]]
+    
+    # Define the file path
+    file_path = figures_savepath + "/error_values.txt"
+    
+    # Define array names and values
+    arrays = [("nmse error [dB]", h1), ("magnitude error [dB]", h2), ("ILD error [dB]", h3),("diff error", h4),("color error", h5),("ITD error [samples]", h6),("color weighted error ", h7),("magnitude weighted error [dB]", h8)]
+    
+    # Write the arrays to the file
+    with open(file_path, "w") as file:
+        for name, values in arrays:
+            file.write(f"{name}:\n")
+            file.write(f"{values[0]}, {values[1]}\n\n")
+    
+    plt.plot(h_qe)
+    plt.plot(h_pe)
+    plt.grid()
+    plt.xlabel("iterations")
+    plt.ylabel("error")
+    plt.title("Training Curves")
+    plt.legend(["Quadrant errors (%)","Local polar RMS error (deg)"]);
+    if is_save:
+        plt.savefig(figures_savepath+ "/qe_pe_curves.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+
+    Hnm_imls = output.detach()
+
+    x_lr = f.spatial_interpolation(Hnm_imls,Y_low_az,True).float()
+    #ITD_imls = itd_est.get_ITD_onset_threshold(x_lr,fs,trashhold,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
+    ITD_imls = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
+    x_lr = f.spatial_interpolation(Hnm_mls,Y_low_az,True).float()
+    #ITD_mls = itd_est.get_ITD_onset_threshold(x_lr,fs,trashhold,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
+    ITD_mls = itd_est.get_ITD_group_delay(x_lr,fs,cutoff_freq,False) #returns the micro sec ITD usinng the onset method
+
+
+    ITD_ref_tmp = ITD_ref.detach().numpy()
+    ITD_ref_tmp = (ITD_ref_tmp/fs)*1e6
+    ITD_imls = ITD_imls.detach().numpy()
+    ITD_imls = (ITD_imls/fs)*1e6
+    ITD_mls = ITD_mls.detach().numpy()
+    ITD_mls = (ITD_mls/fs)*1e6
+    
+    plt.figure
+    plt.plot(ITD_ref_tmp, label='Reference')
+    plt.plot(ITD_mls, label='MagLS')
+    plt.plot(ITD_imls, label='iMagLS')
+    plt.xlabel('Incident angle')
+    plt.ylabel('Value [micro sec]')
+    plt.title('ITD')
+    plt.grid(True)
+    plt.legend()
+    if is_save:
+        plt.savefig(figures_savepath+ "/ITD_curves.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+        
+    # Reassign the original low frequency coefficients
+    idx_min = (np.abs(f_vec - 2e3)).argmin()
+    #Hnm_imls[:,0:idx_min,:] = Hnm_mls[:,0:idx_min,:]
+
+    
+    # Calc some plots
+    lambda_vec_tests = [1,1,1,1,1,1,0,0]
+    res_imls   = loss_function_v4(Hnm_imls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                     ILD_ref,ITD_ref,GD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                     lambda_vec_tests,save_path_sofa,SourcePosition,flag_s2=False,norm_flag=True)
+    
+    res_ls   = loss_function_v4(Hnm_low,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                     ILD_ref,ITD_ref,GD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                     lambda_vec_tests,save_path_sofa,SourcePosition,flag_s2=False,norm_flag=True)
+    
+    res_mls   = loss_function_v4(Hnm_mls,Y_low_lebedev,Y_low_az,p_f_high_lebedev,p_ref_az_t,
+                                     ILD_ref,ITD_ref,GD_ref,pos_grad_ref_fc,pos_grad_ref_f,AK_f_c, fs, f_band, AK_Nmax, AK_n, AK_C,nfft,
+                                     lambda_vec_tests,save_path_sofa,SourcePosition,flag_s2=False,norm_flag=True)
+    
+
+    e_ILD_imls  = res_imls["e_ILD"].detach().cpu().numpy()
+    e_nmse_imls = res_imls["e_nmse"].detach().cpu().numpy()
+    e_mag_imls  = res_imls["e_mag"].detach().cpu().numpy()
+    ILD_imls    = res_imls["ILD"].detach()
+
+    e_ILD_non_av_ls = torch.abs(ILD_ref - res_ls["ILD"])
+    e_ILD_non_av_mls = torch.abs(ILD_ref - res_mls["ILD"])
+    e_ILD_non_av_imls = torch.abs(ILD_ref - res_imls["ILD"])
+
+
+    plt.plot(f_vec,res_ls["e_nmse"].detach().numpy())
+    plt.plot(f_vec,res_mls["e_nmse"].detach().numpy())
+    plt.plot(f_vec,res_imls["e_nmse"].detach().numpy())
+    plt.plot(f_vec,res_ls["e_mag"].detach().numpy())
+    plt.plot(f_vec,res_mls["e_mag"].detach().numpy())
+    plt.plot(f_vec,res_imls["e_mag"].detach().numpy())
+    plt.xlim([99,20e3])
+    plt.xscale('log')
+    plt.xlabel("f[Hz]")
+    plt.grid(which='both')
+    plt.title("Avaraged per ear NMSE and Magnitude Errors")
+    plt.legend(["LS NMSE","MagLS NMSE","iMagLS NMSE","LS magnitude","MagLS magnitude","iMagLS magnitude"])
+    plt.ylabel("error[dB]");
+    if is_save:
+        plt.savefig(figures_savepath+ "/freq_errors.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+    
+    
+
+    plt.plot(ang_vec,torch.mean(ILD_ref,dim=0))
+    plt.plot(ang_vec,torch.mean(res_ls["ILD"],dim=0).detach().numpy())
+    plt.plot(ang_vec,torch.mean(res_mls["ILD"],dim=0).detach().numpy())
+    plt.plot(ang_vec,torch.mean(ILD_imls,dim=0))
+    plt.grid()
+    plt.xlabel("azimuth [deg]")
+    plt.ylabel("ILD value [dB]")
+    plt.legend(["Reference","LS","MagLS","iMagLS"])
+    plt.xlim((ang_vec[0], ang_vec[-1]))
+    plt.title("ILD Value average over all central frequencies");
+    if is_save:
+        plt.savefig(figures_savepath+ "/ILD_Curves.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+    
+    plt.plot(ang_vec,res_ls["e_ILD"].detach().numpy())
+    plt.plot(ang_vec,res_mls["e_ILD"].detach().numpy())
+    plt.plot(ang_vec,e_ILD_imls)
+    plt.grid()
+    plt.xlabel("azimuth [deg]")
+    plt.ylabel("Error [dB]")
+    plt.legend(["LS","MagLS","iMagLS"])
+    plt.xlim((ang_vec[0], ang_vec[-1]))
+    plt.title("ILD error average over all central frequencies");
+    if is_save:
+        plt.savefig(figures_savepath+ "/ILD_errors_ang.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+
+
+    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_ls,dim=1).detach().numpy(), '--o')
+    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_mls,dim=1).detach().numpy(), '--o')
+    plt.plot(AK_f_c,torch.mean(e_ILD_non_av_imls,dim=1).detach().numpy(), '--o')
+    plt.grid()
+    plt.xlabel("f[Hz]")
+    plt.ylabel("ILD error [dB]")
+    plt.legend(["LS","MagLS","iMagLS"])
+    plt.xlim((AK_f_c[0], AK_f_c[-1]))
+    plt.title("ILD Error average over all lateral Directions");
+    if is_save:
+        plt.savefig(figures_savepath+ "/ILD_errors_freq.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+
+
+    
+    e_color_fc_lr_space_imls = res_imls["e_color_fc_lr_space"].detach().cpu().numpy()
+    e_color_fc_lr_space_mls  = res_mls["e_color_fc_lr_space"].detach().cpu().numpy()
+    e_color_fc_lr_space_ls   = res_ls["e_color_fc_lr_space"].detach().cpu().numpy()
+
+
+    e_color_fc_imls = np.squeeze(np.mean(e_color_fc_lr_space_imls,axis = 1))[:,0] # mean over space and take the left ear
+    e_color_fc_mls = np.squeeze(np.mean(e_color_fc_lr_space_mls,axis = 1))[:,0] # mean over space and take the left ear
+    e_color_fc_ls = np.squeeze(np.mean(e_color_fc_lr_space_ls,axis = 1))[:,0] # mean over space and take the left ear
+
+    e_color_fc_imls_right = np.squeeze(np.mean(e_color_fc_lr_space_imls,axis = 1))[:,1] # mean over space and take the left ear
+    e_color_fc_mls_right  = np.squeeze(np.mean(e_color_fc_lr_space_mls,axis = 1))[:,1] # mean over space and take the left ear
+    e_color_fc_ls_right   = np.squeeze(np.mean(e_color_fc_lr_space_ls,axis = 1))[:,1] # mean over space and take the left ear
+
+
+    plt.plot(AK_f_c,e_color_fc_ls, '--o')
+    plt.plot(AK_f_c,e_color_fc_mls, '--o')
+    plt.plot(AK_f_c,e_color_fc_imls, '--o')
+    plt.plot(AK_f_c,e_color_fc_ls_right, '--o')
+    plt.plot(AK_f_c,e_color_fc_mls_right, '--o')
+    plt.plot(AK_f_c,e_color_fc_imls_right, '--o')
+    plt.grid()
+    plt.xlabel("f[Hz]")
+    plt.ylabel("Coloration error [dB]")
+    plt.legend(["LS-left","MagLS-left","iMagLS-left","LS-right","MagLS-right","iMagLS-right"])
+    plt.xlim((AK_f_c[0], AK_f_c[-1]))
+    plt.title("Coloration Error average over Space");
+    if is_save:
+        plt.savefig(figures_savepath+ "/color_errors_freq.png")
+    if not(shutup):
+        plt.show()
+    else:
+        plt.close()
+    
+
+
+    if is_save:
+        HRIR_name = "/iMagLS.sofa"
+        save_as_sofa(Hnm_imls,Y_low_lebedev,SourcePosition,int(fs),save_path_sofa,HRIR_name)
+    
+
+    path_sofa = save_path_sofa + HRIR_name
+    fig_name = "left_ear_group_delay-iMagLS.png"
+    plot_sofa_group_delay(path_sofa,figures_savepath,fig_name,is_save,shutup)
+
+
+    # Save .wav files of results
+    
+    base_dir = os.path.join('..')
+    save_name = "iMagLS"
+    ang = np.atleast_2d(np.array([-60,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
+
+    get_sound_aluriazitions(Hnm_imls,Y_low_lebedev,omega,ang,results_save_path,dry_sig_name,base_dir,save_name,fs,shutup)
+
+    figures_savepath_tf_plots = os.path.join(figures_savepath, "time_freq_plots")
+    if not os.path.isdir(figures_savepath_tf_plots):
+        os.makedirs(figures_savepath_tf_plots)
+
+    
+    ang = np.atleast_2d(np.array([-60,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
+    path_sofa = save_path_sofa + "/iMagLS.sofa"
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-iMagLS.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath_tf_plots,file_name,is_save,shutup)
+    path_sofa = save_path_sofa + "/MagLS.sofa"
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-MagLS.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath_tf_plots,file_name,is_save,shutup)
+    path_sofa = save_path_sofa + "/ref.sofa"
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-ref.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath_tf_plots,file_name,is_save,shutup)
+
+    ang = np.atleast_2d(np.array([0,90])) # (1,2) ang[0,0]=azimuth and ang[0,1]=elevation (spherical elevation system)
+    path_sofa = save_path_sofa + "/iMagLS.sofa"
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-iMagLS.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath_tf_plots,file_name,is_save,shutup)
+    path_sofa = save_path_sofa + "/MagLS.sofa"
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-MagLS.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath_tf_plots,file_name,is_save,shutup)
+    path_sofa = save_path_sofa + "/ref.sofa"
+    file_name = "/example_"  + np.array2string(ang[0]) + "_time_freq_plot-ref.png"
+    plot_time_freq_example(path_sofa,ang,fs,figures_savepath_tf_plots,file_name,is_save,shutup)
+
+    
+                
+    
+    output_dict = {
+        "Hnm_imls": Hnm_imls,
+        "Hnm_mls": Hnm_mls,
+        "Hnm_high": Hnm_high,
+        "Y_high_az": Y_high_az,
+        "Y_low_az": Y_low_az,
+        "Y_high_lebedev": Y_high_lebedev,
+        "Y_low_lebedev": Y_low_lebedev,
+        "fs": fs,
+        "omega": omega,
+        "omega_az": omega_az
+    }
+
+    results_save_path_data = os.path.join(results_save_path, "data" )
+    filename = "/data" + ".pkl"
+
+    if is_save:
+        if not os.path.isdir(results_save_path_data):
+                os.makedirs(results_save_path_data)
+        with open(results_save_path_data+filename, 'wb') as ff:
+            pickle.dump(output_dict, ff)
+            
+
+    print("\n\n=======\nDone!\n=======")
+    return output_dict
